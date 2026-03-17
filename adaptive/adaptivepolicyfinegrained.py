@@ -167,6 +167,31 @@ class AdaptiveActionChunker:
         self.cached_boxes = None
         self.query_box_times = 0
         self.chunk_levels = 5
+
+    def get_runtime_config(self):
+        return {
+            "policy_type": "finegrained_base",
+            "min_horizon": self.min_h,
+            "max_horizon": self.max_h,
+            "uncertainty_threshold": self.threshold,
+            "coverage_threshold": self.coverage_threshold,
+            "continuity_threshold": self.continuity_threshold,
+            "action_history_window": self.action_history_window,
+            "chunk_levels": self.chunk_levels,
+            "grid_size": [
+                self.uncertainty_engine.gh,
+                self.uncertainty_engine.gw,
+            ],
+            "image_size": [
+                self.uncertainty_engine.H,
+                self.uncertainty_engine.W,
+            ],
+            "grounding_dino": {
+                "config_path": self.config_path,
+                "checkpoint_path": self.checkpoint_path,
+                "device": self.device,
+            },
+        }
         
     def reset(self):
         """重置状态"""

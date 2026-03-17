@@ -22,6 +22,16 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
         super().__init__(*args, **kwargs)
         self.dino_score_margin = float(dino_score_margin)
 
+    def get_runtime_config(self):
+        config = super().get_runtime_config()
+        config.update(
+            {
+                "policy_type": "finegrained_tracker_scoregate",
+                "dino_score_margin": self.dino_score_margin,
+            }
+        )
+        return config
+
     def _score_value(self, logits) -> float:
         if logits is None:
             return float("-inf")

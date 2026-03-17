@@ -43,6 +43,7 @@ DEFAULT_TOP_LEVEL_FILES = [
 # 新增：需要整体复制的额外文件夹列表
 DEFAULT_EXTRA_FOLDERS = [
     "computeflops",
+    "trackersscoregood",
     # 例子：
     # "configs",
     # "tools",

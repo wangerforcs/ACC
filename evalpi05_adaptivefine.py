@@ -115,6 +115,65 @@ class VLASHEvalConfig:
                 self.policy.pretrained_path = policy_path
 
 
+def _yaml_scalar(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    if text == "" or any(ch in text for ch in [":", "#", "{", "}", "[", "]", ",", "\n", "\t"]):
+        return json.dumps(text, ensure_ascii=False)
+    return text
+
+
+def _to_yaml_lines(data, indent=0):
+    prefix = " " * indent
+    lines = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                lines.append(f"{prefix}{key}:")
+                lines.extend(_to_yaml_lines(value, indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {_yaml_scalar(value)}")
+        return lines
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}-")
+                lines.extend(_to_yaml_lines(item, indent + 2))
+            else:
+                lines.append(f"{prefix}- {_yaml_scalar(item)}")
+        return lines
+    return [f"{prefix}{_yaml_scalar(data)}"]
+
+
+def _write_yaml_file(path: Path, data):
+    path.write_text("\n".join(_to_yaml_lines(data)) + "\n", encoding="utf-8")
+
+
+def _collect_eval_runtime_config(cfg: VLASHEvalConfig, adaptive_chunker):
+    config = {
+        "env_task": cfg.env_task,
+        "use_adaptive_chunk": cfg.use_adaptive_chunk,
+        "adaptive_min_horizon": cfg.adaptive_min_horizon,
+        "adaptive_max_horizon": cfg.adaptive_max_horizon,
+        "adaptive_uncertainty_threshold": cfg.adaptive_uncertainty_threshold,
+        "adaptive_coverage_threshold": cfg.adaptive_coverage_threshold,
+        "adaptive_continuity_threshold": cfg.adaptive_continuity_threshold,
+        "eval_batch_size": cfg.eval_batch_size,
+        "max_episodes": cfg.max_episodes,
+        "seed": cfg.seed,
+    }
+    if adaptive_chunker is not None and hasattr(adaptive_chunker, "get_runtime_config"):
+        config["adaptive_chunker"] = adaptive_chunker.get_runtime_config()
+    else:
+        config["adaptive_chunker"] = None
+    return config
+
+
 def _configure_component_log_levels(cfg: VLASHEvalConfig):
     root_level = getattr(logging, str(cfg.eval_log_level).upper(), logging.INFO)
     logging.getLogger().setLevel(root_level)
@@ -651,6 +710,11 @@ def eval_single_vec_env(
             float(np.mean(successful_inference_counts)) if successful_inference_counts else None
         ),
         "launch_interval_stats": launch_interval_stats,
+        "adaptive_chunker_runtime_config": (
+            async_mgr.adaptive_chunker.get_runtime_config()
+            if async_mgr.adaptive_chunker is not None and hasattr(async_mgr.adaptive_chunker, "get_runtime_config")
+            else None
+        ),
     }
     
 @parser.wrap()
@@ -721,6 +785,7 @@ def run_benchmark(cfg: VLASHEvalConfig):
                 "successful_inference_counts": task_info["successful_inference_counts"],
                 "avg_successful_inference_times": task_info["avg_successful_inference_times"],
                 "launch_interval_stats": task_info["launch_interval_stats"],
+                "adaptive_chunker_runtime_config": task_info["adaptive_chunker_runtime_config"],
             }
             overall_successes.extend(task_info["success_list"])
             suite_successful_inference_counts[suite_name].extend(task_info["successful_inference_counts"])
@@ -735,6 +800,13 @@ def run_benchmark(cfg: VLASHEvalConfig):
     for task_result in results_per_task.values():
         all_steps.extend(task_result["steps_list"])
     
+    runtime_config = _collect_eval_runtime_config(cfg, None)
+    for task_result in results_per_task.values():
+        task_runtime_config = task_result.get("adaptive_chunker_runtime_config")
+        if task_runtime_config is not None:
+            runtime_config["adaptive_chunker"] = task_runtime_config
+            break
+
     final_results = {
         "overall": {
             "avg_success_rate": np.mean(overall_successes),
@@ -754,16 +826,21 @@ def run_benchmark(cfg: VLASHEvalConfig):
             }
             for suite_name, counts in suite_successful_inference_counts.items()
         },
+        "runtime_config": runtime_config,
     }
     
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "full_benchmark_results.json", "w") as f:
         json.dump(final_results, f, indent=2)
+    with open(out_dir / "runtime_config.json", "w") as f:
+        json.dump(runtime_config, f, indent=2)
+    _write_yaml_file(out_dir / "runtime_config.yaml", runtime_config)
     
     logging.info("="*50)
     logging.info(f"FINAL OVERALL SR: {final_results['overall']['avg_success_rate']*100:.2f}%")
     logging.info(f"Results saved to {out_dir}")
+    logging.info(f"Runtime config saved to {out_dir / 'runtime_config.yaml'}")
     logging.info("="*50)
 
     close_envs(all_envs_dict)

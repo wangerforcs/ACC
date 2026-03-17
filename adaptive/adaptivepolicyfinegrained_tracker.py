@@ -51,6 +51,19 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.last_query_used_dino = False
         self.active_tracker_backend = None
 
+    def get_runtime_config(self):
+        config = super().get_runtime_config()
+        config.update(
+            {
+                "policy_type": "finegrained_tracker",
+                "tracker_backend": self.tracker_backend,
+                "dino_refresh_interval": self.dino_refresh_interval,
+                "dino_accept_iou": self.dino_accept_iou,
+                "dino_accept_center_dist": self.dino_accept_center_dist,
+            }
+        )
+        return config
+
     def _empty_box_result(self):
         empty = torch.tensor([])
         return empty, empty, torch.tensor([]), [], None

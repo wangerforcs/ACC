@@ -1,0 +1,23 @@
+policy_type: finegrained_tracker_scoregate
+min_horizon: 5
+max_horizon: 30
+uncertainty_threshold: 0.01
+coverage_threshold: 0.1
+continuity_threshold: 0.2
+action_history_window: 5
+chunk_levels: 5
+grid_size:
+  - 16
+  - 16
+image_size:
+  - 224
+  - 224
+grounding_dino:
+  config_path: /pub/data/wangzb/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py
+  checkpoint_path: /pub/data/wangzb/GroundingDINO/weights/20260314_pool_8~2_best.pth
+  device: cuda
+tracker_backend: csrt
+dino_refresh_interval: 20
+dino_accept_iou: 0.1
+dino_accept_center_dist: 0.15
+dino_score_margin: 0.1

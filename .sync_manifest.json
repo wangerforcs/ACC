@@ -15,11 +15,12 @@
     "sync_to_accrepo.py"
   ],
   "extra_folders": [
-    "computeflops"
+    "computeflops",
+    "trackersscoregood"
   ],
-  "adaptive_file_count": 33,
+  "adaptive_file_count": 34,
   "top_level_file_count": 11,
-  "extra_folder_file_count": 4,
+  "extra_folder_file_count": 9,
   "copied": [
     {
       "path": "adaptive/.git/description",
@@ -47,7 +48,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -63,19 +64,19 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_balanced.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_heavy.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/benchopencv.py",
@@ -154,20 +155,24 @@
       "changed": false
     },
     {
-      "path": "computeflops/compute_dino.py",
+      "path": "adaptive/tracker_scoregate_defaults.yaml",
       "changed": true
+    },
+    {
+      "path": "computeflops/compute_dino.py",
+      "changed": false
     },
     {
       "path": "computeflops/compute_dsflops.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "computeflops/compute_flops.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "computeflops/detector.yaml",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05.yaml",
@@ -203,10 +208,30 @@
     },
     {
       "path": "runtrackersscore.sh",
-      "changed": true
+      "changed": false
     },
     {
       "path": "sync_to_accrepo.py",
+      "changed": true
+    },
+    {
+      "path": "trackersscoregood/libero_10.txt",
+      "changed": true
+    },
+    {
+      "path": "trackersscoregood/libero_goal.txt",
+      "changed": true
+    },
+    {
+      "path": "trackersscoregood/libero_object.txt",
+      "changed": true
+    },
+    {
+      "path": "trackersscoregood/libero_spatial.txt",
+      "changed": true
+    },
+    {
+      "path": "trackersscoregood/tracker_scoregate_defaults.yaml",
       "changed": true
     },
     {
