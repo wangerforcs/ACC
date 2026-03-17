@@ -1,0 +1,195 @@
+{
+  "source_root": "/pub/data/wangzb/vlash",
+  "target_root": "/home/wangzb/accrepo",
+  "top_level_files": [
+    "evalpi05_adaptive.py",
+    "evalpi05_adaptivefine.py",
+    "evalpi05_adaptivefine_heavy.py",
+    "evalpi05_random_monitor.py",
+    "evalpi05.yaml",
+    "visualutils.py",
+    "inspect_logs.py",
+    "runtrackers.sh",
+    "runtrackersscore.sh",
+    "run_inference.py"
+  ],
+  "adaptive_file_count": 33,
+  "top_level_file_count": 10,
+  "copied": [
+    {
+      "path": "adaptive/.git/description",
+      "changed": true
+    },
+    {
+      "path": "adaptive/.git/hooks/pre-push.sample",
+      "changed": true
+    },
+    {
+      "path": "adaptive/.git/hooks/sendemail-validate.sample",
+      "changed": true
+    },
+    {
+      "path": "adaptive/.git/info/exclude",
+      "changed": true
+    },
+    {
+      "path": "adaptive/__init__.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicy.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_sam2_rollout.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_sam2image.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_tracker_heavy.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/benchopencv.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/benchsam2.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/export_suite_tracking_videos.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/forai.txt",
+      "changed": true
+    },
+    {
+      "path": "adaptive/monitor.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/extractor.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/libero.txt",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/mock_extractor.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/test_data.json",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/test_data.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/test_extractor.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/object_extractor/test_mock_extractor.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_box_to_token_mask.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_dino_libero_env.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_grounding_dino.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_opencv_tracker_benchmark.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_sam2_image.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_sam2_rollout.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_sam2_video.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/test_tracker_video.py",
+      "changed": true
+    },
+    {
+      "path": "evalpi05.yaml",
+      "changed": true
+    },
+    {
+      "path": "evalpi05_adaptive.py",
+      "changed": true
+    },
+    {
+      "path": "evalpi05_adaptivefine.py",
+      "changed": true
+    },
+    {
+      "path": "evalpi05_adaptivefine_heavy.py",
+      "changed": true
+    },
+    {
+      "path": "evalpi05_random_monitor.py",
+      "changed": true
+    },
+    {
+      "path": "inspect_logs.py",
+      "changed": true
+    },
+    {
+      "path": "run_inference.py",
+      "changed": true
+    },
+    {
+      "path": "runtrackers.sh",
+      "changed": true
+    },
+    {
+      "path": "runtrackersscore.sh",
+      "changed": true
+    },
+    {
+      "path": "visualutils.py",
+      "changed": true
+    }
+  ],
+  "removed": [],
+  "dry_run": false,
+  "clean": false
+}
