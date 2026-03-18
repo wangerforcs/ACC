@@ -29,6 +29,8 @@ TARGET_ROOT = Path("/home/wangzb/accrepo").resolve()
 DEFAULT_TOP_LEVEL_FILES = [
     "evalpi05_adaptive.py",
     "evalpi05_adaptivefine.py",
+    "evalpi05_adaptivefine_norm.py",
+    "evalpi05_adaptivefine_balanced.py",
     "evalpi05_adaptivefine_heavy.py",
     "evalpi05_random_monitor.py",
     "evalpi05.yaml",

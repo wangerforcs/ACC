@@ -4,6 +4,8 @@
   "top_level_files": [
     "evalpi05_adaptive.py",
     "evalpi05_adaptivefine.py",
+    "evalpi05_adaptivefine_norm.py",
+    "evalpi05_adaptivefine_balanced.py",
     "evalpi05_adaptivefine_heavy.py",
     "evalpi05_random_monitor.py",
     "evalpi05.yaml",
@@ -19,7 +21,7 @@
     "trackersscoregood"
   ],
   "adaptive_file_count": 34,
-  "top_level_file_count": 10,
+  "top_level_file_count": 12,
   "extra_folder_file_count": 9,
   "copied": [
     {
@@ -48,7 +50,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -176,15 +178,23 @@
     },
     {
       "path": "evalpi05.yaml",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_adaptive.py",
       "changed": false
     },
     {
+      "path": "evalpi05_adaptivefine_balanced.py",
+      "changed": false
+    },
+    {
       "path": "evalpi05_adaptivefine_heavy.py",
-      "changed": true
+      "changed": false
+    },
+    {
+      "path": "evalpi05_adaptivefine_norm.py",
+      "changed": false
     },
     {
       "path": "evalpi05_random_monitor.py",
@@ -235,7 +245,10 @@
       "changed": false
     }
   ],
-  "removed": [],
+  "removed": [
+    "adaptive/forai.txt",
+    "evalpi05_adaptivefine.py"
+  ],
   "dry_run": false,
-  "clean": false
+  "clean": true
 }
