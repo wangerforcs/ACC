@@ -111,6 +111,7 @@ class UncertaintyEngine:
         
         # 如果 DINO 没检测到东西，不确定性直接拉满
         if target_mask.sum() == 0:
+            logging.info(f"target_mask sum is 0, attn_avg max is {attn_avg.max().item()}")
             return {"kl": 10.0, "coverage": 0.0, "peak_ratio": 0.0, "uncertainty": 0.0}
         target_mask = target_mask / target_mask.sum() 
         

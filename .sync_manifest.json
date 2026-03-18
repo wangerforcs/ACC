@@ -19,7 +19,7 @@
     "trackersscoregood"
   ],
   "adaptive_file_count": 34,
-  "top_level_file_count": 11,
+  "top_level_file_count": 10,
   "extra_folder_file_count": 9,
   "copied": [
     {
@@ -64,7 +64,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_balanced.py",
@@ -76,7 +76,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/benchopencv.py",
@@ -156,7 +156,7 @@
     },
     {
       "path": "adaptive/tracker_scoregate_defaults.yaml",
-      "changed": true
+      "changed": false
     },
     {
       "path": "computeflops/compute_dino.py",
@@ -176,19 +176,15 @@
     },
     {
       "path": "evalpi05.yaml",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_adaptive.py",
       "changed": false
     },
     {
-      "path": "evalpi05_adaptivefine.py",
-      "changed": true
-    },
-    {
       "path": "evalpi05_adaptivefine_heavy.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_random_monitor.py",
@@ -212,27 +208,27 @@
     },
     {
       "path": "sync_to_accrepo.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/libero_10.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/libero_goal.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/libero_object.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/libero_spatial.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/tracker_scoregate_defaults.yaml",
-      "changed": true
+      "changed": false
     },
     {
       "path": "visualutils.py",

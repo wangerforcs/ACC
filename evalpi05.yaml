@@ -33,7 +33,7 @@ train_cfg:
     pretrained_path: /data/datasets/models-hf/pi05_base
     device: cuda
     push_to_hub: false
-    state_cond: True #why false in official libero setup #之前这里都是true, 到底按照的哪个来的
+    state_cond: true #why false in official libero setup #之前这里都是true, 到底按照的哪个来的
   dataset:
     repo_id: lerobot/libero
     video_backend: torchcodec

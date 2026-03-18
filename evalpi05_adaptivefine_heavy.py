@@ -41,6 +41,7 @@ from vlash.configs.train_config import VLASHTrainConfig
 from adaptive.adaptivepolicyfinegrained_tracker_heavy import AdaptiveActionChunker
 # from adaptive.adaptivepolicyfinegrained import AdaptiveActionChunker
 from adaptive.monitor import GPUMonitor
+from evalpi05_adaptivefine_norm import _write_yaml_file, _collect_eval_runtime_config
 
 # =============================================================================
 # 1. 配置定义
@@ -90,6 +91,7 @@ class VLASHEvalConfig:
     eval_log_level: str = "INFO"
     tracker_log_level: str = "WARNING"
     tracker_heavy_log_level: str = "WARNING"
+    enable_gripper_interruption: bool = False
     
     def __post_init__(self):
         if not isinstance(self.policy, PreTrainedConfig):
@@ -119,6 +121,9 @@ def _configure_component_log_levels(cfg: VLASHEvalConfig):
     logging.getLogger().setLevel(root_level)
     logging.getLogger("adaptive.tracker").setLevel(
         getattr(logging, str(cfg.tracker_log_level).upper(), logging.WARNING)
+    )
+    logging.getLogger("adaptive.tracker_scoregate").setLevel(
+        getattr(logging, str(cfg.tracker_heavy_log_level).upper(), logging.WARNING)
     )
     logging.getLogger("adaptive.tracker_heavy").setLevel(
         getattr(logging, str(cfg.tracker_heavy_log_level).upper(), logging.WARNING)
@@ -189,6 +194,8 @@ class VLASHVectorAsyncManager:
         self.batch_env_step = 0
         self.last_launch_step = None
         self.launch_step_intervals = []
+        self.active_env_mask = np.ones(self.num_envs, dtype=bool)
+        self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
 
     def reset_state(self):
         """每个 Batch 开始前调用"""
@@ -212,6 +219,14 @@ class VLASHVectorAsyncManager:
         self.inference_times = 0
         self.batch_env_step = 0
         self.last_launch_step = None
+        self.active_env_mask = np.ones(self.num_envs, dtype=bool)
+        self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
+
+    def set_active_env_mask(self, active_mask):
+        active_mask = np.asarray(active_mask, dtype=bool)
+        if active_mask.shape[0] != self.num_envs:
+            raise ValueError(f"active_mask length {active_mask.shape[0]} != num_envs {self.num_envs}")
+        self.active_env_mask = active_mask
 
     def _record_launch_interval(self):
         if self.last_launch_step is not None:
@@ -322,6 +337,7 @@ class VLASHVectorAsyncManager:
         """启动后台推理"""
         self.inference_times += 1
         self._record_launch_interval()
+        self.per_env_inference_counts[self.active_env_mask] += 1
         if self.adaptive_chunker is not None:
             logging.info(f"Launching inference for task")
         self.save_attention_step -= 1
@@ -336,7 +352,7 @@ class VLASHVectorAsyncManager:
         self.next_chunk_future = None
         if self.adaptive_chunker is not None:
             self.adaptive_chunker.action_history = []
-            if reason is False:
+            if reason is False and self.cfg.enable_gripper_interruption:
                 self.get_gripper_change_index()
         
     def get_gripper_change_index(self):
@@ -479,7 +495,7 @@ class VLASHVectorAsyncManager:
                     # 每5步记录一次启发式调整
                     # if self.chunk_index % 5 == 0:
                     # logging.info(f"Heuristic-based chunk size: {self.current_chunk_size}, Reason: {background_info.get('factors', 'N/A')}")
-                    if self.should_interrupt_gripper():
+                    if self.cfg.enable_gripper_interruption and self.should_interrupt_gripper():
                         should_launch = True
                         gripper_change = True
                 except concurrent.futures.TimeoutError:
@@ -563,6 +579,10 @@ def eval_single_vec_env(
     
     successes = []
     episode_steps = []
+    per_episode_inference_counts = []
+    total_inference_times = 0
+    all_launch_intervals = []
+    launch_interval_batches = []
     max_steps = vec_env.call("_max_episode_steps")[0] #这里有max_steps
     monitor = GPUMonitor(gpu_id=0, interval=0.05)
     if cfg.use_monitor:
@@ -580,6 +600,7 @@ def eval_single_vec_env(
         pbar = trange(max_steps, desc=f" Batch {b+1}/{n_batches}", leave=False, disable=inside_slurm())
         for step in pbar:
             if np.all(dones): break
+            async_mgr.set_active_env_mask(~dones)
             
             # 使用异步管理器直接获取 Batch Actions
             # 它内部会自动处理：
@@ -607,35 +628,76 @@ def eval_single_vec_env(
 
         successes.extend(batch_success.tolist())
         episode_steps.extend(batch_steps.tolist())
+        batch_episode_count = min(cfg.eval_batch_size, total_episodes - len(per_episode_inference_counts))
+        per_episode_inference_counts.extend(
+            async_mgr.per_env_inference_counts[:batch_episode_count].tolist()
+        )
+        total_inference_times += async_mgr.inference_times
+        all_launch_intervals.extend(async_mgr.launch_step_intervals)
+        launch_interval_batches.append(list(async_mgr.launch_step_intervals))
 
         # 保存视频
         if cfg.save_video:
             async_mgr.save_video_frames(f"{task_name}_env0_batch{b}")
+
+    if all_launch_intervals:
+        dist = Counter(all_launch_intervals)
+        launch_interval_stats = {
+            "count": len(all_launch_intervals),
+            "distribution": dict(sorted(dist.items())),
+            "mean": float(np.mean(all_launch_intervals)),
+            "min": int(min(all_launch_intervals)),
+            "max": int(max(all_launch_intervals)),
+            "intervals_by_batch": launch_interval_batches,
+        }
+    else:
+        launch_interval_stats = {
+            "count": 0,
+            "distribution": {},
+            "mean": 0.0,
+            "min": None,
+            "max": None,
+            "intervals_by_batch": [],
+        }
+
     if cfg.use_monitor:
         monitor.stop()
         stats = monitor.get_report() 
-        logging.info(f"inference times: {async_mgr.inference_times}")
-        launch_interval_stats = async_mgr.get_launch_interval_stats()
-        logging.info(f"Launch inference interval stats: {launch_interval_stats}")
+        logging.info(f"inference times: {total_inference_times}")
         logging.info(f"GPU Monitor Stats: {stats}")
     else:
-        launch_interval_stats = async_mgr.get_launch_interval_stats()
-        logging.info(f"inference times: {async_mgr.inference_times}")
-        logging.info(f"Launch inference interval stats: {launch_interval_stats}")
+        logging.info(f"inference times: {total_inference_times}")
     
     successes = successes[:total_episodes]
     
     # from visualutils import heatmap_videos
     # heatmap_videos(async_mgr.video_images, async_mgr.video_heatmap, filename='visualizations/'+task_name+".mp4")
     episode_steps = episode_steps[:total_episodes]
+    per_episode_inference_counts = per_episode_inference_counts[:total_episodes]
+    successful_steps_list = [steps for steps, success in zip(episode_steps, successes) if success]
+    successful_inference_counts = [
+        count for count, success in zip(per_episode_inference_counts, successes) if success
+    ]
     return {
         "sr": np.mean(successes),
         "count": len(successes),
         "success_list": successes,
         "steps_list": episode_steps,
         "avg_steps": np.mean(episode_steps) if episode_steps else 0,
-        "inference_times": async_mgr.inference_times,
+        "successful_steps_list": successful_steps_list,
+        "avg_successful_steps": (float(np.mean(successful_steps_list)) if successful_steps_list else None),
+        "inference_times": total_inference_times,
+        "per_episode_inference_counts": per_episode_inference_counts,
+        "successful_inference_counts": successful_inference_counts,
+        "avg_successful_inference_times": (
+            float(np.mean(successful_inference_counts)) if successful_inference_counts else None
+        ),
         "launch_interval_stats": launch_interval_stats,
+        "adaptive_chunker_runtime_config": (
+            async_mgr.adaptive_chunker.get_runtime_config()
+            if async_mgr.adaptive_chunker is not None and hasattr(async_mgr.adaptive_chunker, "get_runtime_config")
+            else None
+        ),
     }
     
 @parser.wrap()
@@ -674,7 +736,9 @@ def run_benchmark(cfg: VLASHEvalConfig):
 
     # 3. 遍历评估
     results_per_task = {}
+    launch_interval_results = {}
     overall_successes = []
+    suite_successful_inference_counts = defaultdict(list)
     start_time = time.time()
     task_name = ""
 
@@ -699,11 +763,18 @@ def run_benchmark(cfg: VLASHEvalConfig):
                 "success_rate": task_info["sr"],
                 "num_episodes": task_info["count"],
                 "avg_steps": task_info["avg_steps"],
+                "avg_successful_steps": task_info["avg_successful_steps"],
                 "steps_list": task_info["steps_list"],
+                "successful_steps_list": task_info["successful_steps_list"],
                 "inference_times": task_info["inference_times"],
-                "launch_interval_stats": task_info["launch_interval_stats"],
+                "per_episode_inference_counts": task_info["per_episode_inference_counts"],
+                "successful_inference_counts": task_info["successful_inference_counts"],
+                "avg_successful_inference_times": task_info["avg_successful_inference_times"],
+                "adaptive_chunker_runtime_config": task_info["adaptive_chunker_runtime_config"],
             }
+            launch_interval_results[f"{suite_name}_{task_id}"] = task_info["launch_interval_stats"]
             overall_successes.extend(task_info["success_list"])
+            suite_successful_inference_counts[suite_name].extend(task_info["successful_inference_counts"])
             
             logging.info(f"Task Done. SR: {task_info['sr']*100:.1f}%")
 
@@ -712,9 +783,18 @@ def run_benchmark(cfg: VLASHEvalConfig):
     
     # 收集所有episode的步骤
     all_steps = []
+    all_successful_steps = []
     for task_result in results_per_task.values():
         all_steps.extend(task_result["steps_list"])
+        all_successful_steps.extend(task_result["successful_steps_list"])
     
+    runtime_config = _collect_eval_runtime_config(cfg, None)
+    for task_result in results_per_task.values():
+        task_runtime_config = task_result.get("adaptive_chunker_runtime_config")
+        if task_runtime_config is not None:
+            runtime_config["adaptive_chunker"] = task_runtime_config
+            break
+
     final_results = {
         "overall": {
             "avg_success_rate": np.mean(overall_successes),
@@ -723,19 +803,45 @@ def run_benchmark(cfg: VLASHEvalConfig):
             "env_task": cfg.env_task,
             "use_adaptive_chunk": cfg.use_adaptive_chunk,
             "avg_steps_per_episode": np.mean(all_steps) if all_steps else 0,
+            "avg_steps_per_successful_episode": (
+                float(np.mean(all_successful_steps)) if all_successful_steps else None
+            ),
             "total_steps": sum(all_steps) if all_steps else 0
         },
-        "per_task": results_per_task
+        "per_task": results_per_task,
+        "per_suite": {
+            suite_name: {
+                "successful_episode_count": len(counts),
+                "avg_successful_steps": (
+                    float(np.mean(successful_steps))
+                    if (successful_steps := [
+                        step
+                        for task_key, task_result in results_per_task.items()
+                        if task_key.startswith(f"{suite_name}_")
+                        for step in task_result["successful_steps_list"]
+                    ])
+                    else None
+                ),
+                "avg_successful_inference_times": (float(np.mean(counts)) if counts else None),
+                "successful_inference_counts": counts,
+            }
+            for suite_name, counts in suite_successful_inference_counts.items()
+        },
+        "runtime_config": runtime_config,
     }
     
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "full_benchmark_results.json", "w") as f:
         json.dump(final_results, f, indent=2)
+    with open(out_dir / "launch_interval_stats.json", "w") as f:
+        json.dump(launch_interval_results, f, indent=2)
+    _write_yaml_file(out_dir / "runtime_config.yaml", runtime_config)
     
     logging.info("="*50)
     logging.info(f"FINAL OVERALL SR: {final_results['overall']['avg_success_rate']*100:.2f}%")
     logging.info(f"Results saved to {out_dir}")
+    logging.info(f"Runtime config saved to {out_dir / 'runtime_config.yaml'}")
     logging.info("="*50)
 
     close_envs(all_envs_dict)
@@ -754,10 +860,19 @@ def run_benchmark(cfg: VLASHEvalConfig):
     logging.info(f" - 总测试规模 (Total Episodes): {total_test_count}")
     logging.info(f" - 最终总成功率 (Overall SR): {np.mean(overall_successes)*100:.2f}%")
     logging.info(f" - 平均每episode步骤数 (Avg Steps per Episode): {np.mean(all_steps):.2f}")
+    logging.info(
+        f" - 成功episode平均步骤数 (Avg Steps per Successful Episode): "
+        f"{(float(np.mean(all_successful_steps)) if all_successful_steps else float('nan')):.2f}"
+    )
     logging.info(f" - 总步骤数 (Total Steps): {sum(all_steps)}")
     logging.info(f" - 自适应chunk size: {'启用' if cfg.use_adaptive_chunk else '禁用'}")
     if cfg.use_adaptive_chunk:
         logging.info(f" - Chunk size范围: {cfg.adaptive_min_horizon} - {cfg.adaptive_max_horizon}")
+    for suite_name, counts in suite_successful_inference_counts.items():
+        logging.info(
+            f" - Suite {suite_name} 成功episode平均推理次数 (Avg Inference Count on Success): "
+            f"{(float(np.mean(counts)) if counts else float('nan')):.2f}"
+        )
     logging.info("="*50)
     
     # entropy_dict = policy.get_attention_entropies()
