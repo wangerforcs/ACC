@@ -1,0 +1,7 @@
+/home/wangzb/vlash/LIBERO/libero/libero/envs/bddl_base_domain.py
+/home/wangzb/vlash/LIBERO/libero/libero/envs/problems/__init__.py
+/home/wangzb/vlash/LIBERO/libero/libero/envs/problems/libero_dynamic_floor_manipulation.py
+/home/wangzb/vlash/LIBERO/libero/libero/envs/regions/__init__.py
+/home/wangzb/vlash/LIBERO/libero/libero/bddl_files/libero_dynamic_examples/test_dynamic_example.bddl
+/home/wangzb/vlash/LIBERO/scripts/create_dynamic_libero_bddl_example.py
+/home/wangzb/vlash/LIBERO/scripts/render_dynamic_libero_example.py

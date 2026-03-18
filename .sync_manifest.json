@@ -7,6 +7,8 @@
     "evalpi05_adaptivefine_norm.py",
     "evalpi05_adaptivefine_balanced.py",
     "evalpi05_adaptivefine_heavy.py",
+    "evalpi05_adaptivefine_dynamic.py",
+    "evalpi05_power_replay.py",
     "evalpi05_random_monitor.py",
     "evalpi05.yaml",
     "visualutils.py",
@@ -14,16 +16,50 @@
     "runtrackers.sh",
     "runtrackersscore.sh",
     "run_inference.py",
-    "sync_to_accrepo.py"
+    "sync_to_accrepo.py",
+    "LIBERO/modified_libero_files.txt"
   ],
   "extra_folders": [
     "computeflops",
     "trackersscoregood"
   ],
-  "adaptive_file_count": 34,
-  "top_level_file_count": 12,
+  "adaptive_file_count": 35,
+  "top_level_file_count": 15,
+  "modified_libero_file_count": 7,
   "extra_folder_file_count": 9,
   "copied": [
+    {
+      "path": "LIBERO/libero/libero/bddl_files/libero_dynamic_examples/test_dynamic_example.bddl",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/libero/libero/envs/bddl_base_domain.py",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/libero/libero/envs/problems/__init__.py",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/libero/libero/envs/problems/libero_dynamic_floor_manipulation.py",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/libero/libero/envs/regions/__init__.py",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/modified_libero_files.txt",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/scripts/create_dynamic_libero_bddl_example.py",
+      "changed": true
+    },
+    {
+      "path": "LIBERO/scripts/render_dynamic_libero_example.py",
+      "changed": true
+    },
     {
       "path": "adaptive/.git/description",
       "changed": false
@@ -50,7 +86,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -66,15 +102,15 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_balanced.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_heavy.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
@@ -133,6 +169,10 @@
       "changed": false
     },
     {
+      "path": "adaptive/test_dynamic_libero_env.py",
+      "changed": true
+    },
+    {
       "path": "adaptive/test_grounding_dino.py",
       "changed": false
     },
@@ -178,7 +218,7 @@
     },
     {
       "path": "evalpi05.yaml",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_adaptive.py",
@@ -186,15 +226,23 @@
     },
     {
       "path": "evalpi05_adaptivefine_balanced.py",
-      "changed": false
+      "changed": true
+    },
+    {
+      "path": "evalpi05_adaptivefine_dynamic.py",
+      "changed": true
     },
     {
       "path": "evalpi05_adaptivefine_heavy.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_adaptivefine_norm.py",
-      "changed": false
+      "changed": true
+    },
+    {
+      "path": "evalpi05_power_replay.py",
+      "changed": true
     },
     {
       "path": "evalpi05_random_monitor.py",
@@ -218,7 +266,7 @@
     },
     {
       "path": "sync_to_accrepo.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "trackersscoregood/libero_10.txt",
@@ -245,10 +293,7 @@
       "changed": false
     }
   ],
-  "removed": [
-    "adaptive/forai.txt",
-    "evalpi05_adaptivefine.py"
-  ],
+  "removed": [],
   "dry_run": false,
-  "clean": true
+  "clean": false
 }

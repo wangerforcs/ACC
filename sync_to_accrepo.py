@@ -32,6 +32,8 @@ DEFAULT_TOP_LEVEL_FILES = [
     "evalpi05_adaptivefine_norm.py",
     "evalpi05_adaptivefine_balanced.py",
     "evalpi05_adaptivefine_heavy.py",
+    "evalpi05_adaptivefine_dynamic.py",
+    "evalpi05_power_replay.py",
     "evalpi05_random_monitor.py",
     "evalpi05.yaml",
     "visualutils.py",
@@ -40,6 +42,7 @@ DEFAULT_TOP_LEVEL_FILES = [
     "runtrackersscore.sh",
     "run_inference.py",
     "sync_to_accrepo.py",
+    "LIBERO/modified_libero_files.txt",
 ]
 
 # 新增：需要整体复制的额外文件夹列表
@@ -61,6 +64,8 @@ EXCLUDE_GLOBS = [
     "adaptive/sam2_rollout_results/**",
     "adaptive/sam2_image_results/**",
 ]
+
+MODIFIED_LIBERO_LIST = "LIBERO/modified_libero_files.txt"
 
 
 def is_excluded(rel_path: Path, patterns: list[str]) -> bool:
@@ -98,6 +103,33 @@ def iter_top_level_files(source_root: Path, file_list: list[str]) -> list[Path]:
         if path.is_file():
             files.append(path.relative_to(source_root))
     return sorted(files)
+
+
+def iter_modified_libero_files(source_root: Path, list_file: str) -> list[Path]:
+    manifest_path = source_root / list_file
+    if not manifest_path.is_file():
+        return []
+
+    files: list[Path] = []
+    for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        file_path = Path(line)
+        try:
+            rel_path = file_path.resolve().relative_to(source_root.resolve())
+        except Exception:
+            try:
+                rel_path = Path(line).relative_to(source_root)
+            except Exception:
+                continue
+
+        candidate = source_root / rel_path
+        if candidate.is_file():
+            files.append(rel_path)
+
+    return sorted(set(files))
 
 
 def iter_extra_folder_files(source_root: Path, folder_list: list[str], exclude_globs: list[str]) -> list[Path]:
@@ -197,9 +229,10 @@ def main() -> None:
 
     adaptive_files = iter_adaptive_files(source_root, EXCLUDE_GLOBS)
     top_level_files = iter_top_level_files(source_root, args.top_level)
+    modified_libero_files = iter_modified_libero_files(source_root, MODIFIED_LIBERO_LIST)
     extra_folder_files = iter_extra_folder_files(source_root, args.extra_folders, EXCLUDE_GLOBS)
 
-    all_files = sorted(set(adaptive_files + top_level_files + extra_folder_files))
+    all_files = sorted(set(adaptive_files + top_level_files + modified_libero_files + extra_folder_files))
 
     copied = [copy_file(source_root, target_root, rel_path, args.dry_run) for rel_path in all_files]
     expected_paths = {item["path"] for item in copied}
@@ -221,6 +254,7 @@ def main() -> None:
         "extra_folders": args.extra_folders,
         "adaptive_file_count": len(adaptive_files),
         "top_level_file_count": len(top_level_files),
+        "modified_libero_file_count": len(modified_libero_files),
         "extra_folder_file_count": len(extra_folder_files),
         "copied": copied,
         "removed": removed,

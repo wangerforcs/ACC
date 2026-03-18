@@ -26,6 +26,9 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         dino_refresh_interval: int = 20,
         dino_accept_iou: float = 0.1,
         dino_accept_center_dist: float = 0.15,
+        object_motion_threshold: float = 0.03,
+        grasp_distance_threshold: float = 0.08,
+        gripper_closed_threshold: float = 0.2,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -33,6 +36,9 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.dino_refresh_interval = max(1, int(dino_refresh_interval))
         self.dino_accept_iou = float(dino_accept_iou)
         self.dino_accept_center_dist = float(dino_accept_center_dist)
+        self.object_motion_threshold = float(object_motion_threshold)
+        self.grasp_distance_threshold = float(grasp_distance_threshold)
+        self.gripper_closed_threshold = float(gripper_closed_threshold)
         self.trackers: List[Any] = []
         self.tracker_phrases: List[str] = []
         self.tracker_prompt: Optional[Tuple[str, ...]] = None
@@ -40,6 +46,7 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.box_query_count = 0
         self.last_query_used_dino = False
         self.active_tracker_backend: Optional[str] = None
+        self.prev_object_centers: dict[str, np.ndarray] = {}
 
     def reset(self):
         super().reset()
@@ -50,6 +57,7 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.box_query_count = 0
         self.last_query_used_dino = False
         self.active_tracker_backend = None
+        self.prev_object_centers = {}
 
     def get_runtime_config(self):
         config = super().get_runtime_config()
@@ -60,6 +68,9 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
                 "dino_refresh_interval": self.dino_refresh_interval,
                 "dino_accept_iou": self.dino_accept_iou,
                 "dino_accept_center_dist": self.dino_accept_center_dist,
+                "object_motion_threshold": self.object_motion_threshold,
+                "grasp_distance_threshold": self.grasp_distance_threshold,
+                "gripper_closed_threshold": self.gripper_closed_threshold,
             }
         )
         return config
@@ -193,6 +204,35 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
             return (self.action_history[-1][-1] - self.action_history[-2][-1]) > 1.5
         except Exception:
             return False
+
+    def _compute_object_motion(self, info_dict):
+        boxes_xyxy = info_dict.get("dino_boxes", [])
+        phrases = info_dict.get("phrases", [])
+        if not boxes_xyxy or not phrases:
+            self.prev_object_centers = {}
+            return 0.0, [], {}
+
+        centers_now = {}
+        movement_by_phrase = {}
+        for idx, phrase in enumerate(phrases):
+            if idx >= len(boxes_xyxy):
+                continue
+            box = boxes_xyxy[idx]
+            if len(box) != 4:
+                continue
+            x1, y1, x2, y2 = [float(v) for v in box]
+            center = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
+            centers_now[phrase] = center
+            prev_center = self.prev_object_centers.get(phrase)
+            if prev_center is not None:
+                movement_by_phrase[phrase] = float(np.linalg.norm(center - prev_center))
+
+        self.prev_object_centers = centers_now
+        max_motion = max(movement_by_phrase.values()) if movement_by_phrase else 0.0
+        moving_phrases = [
+            phrase for phrase, dist in movement_by_phrase.items() if dist > self.object_motion_threshold
+        ]
+        return max_motion, moving_phrases, movement_by_phrase
 
     def _boxes_are_consistent(
         self,
@@ -425,60 +465,38 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         return tracked
 
     def adaptive_chunk_heuristic(self, image, instruction, robot_state=None, object_state=None):
-        parsed_objs = extract_objects(instruction)
+        horizon, info_dict = super().adaptive_chunk_heuristic(
+            image, instruction, robot_state=robot_state, object_state=object_state
+        )
 
-        if not parsed_objs:
-            return self.min_h, {"reason": "parse_fail"}
+        max_motion, moving_phrases, movement_by_phrase = self._compute_object_motion(info_dict)
+        min_object_distance = info_dict.get("min_object_distance")
+        gripper_value = robot_state.get("gripper_state") if robot_state else None
 
-        boxes_cxcywh, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
-        boxes = boxes_cxcywh
+        gripper_closed = False
+        if gripper_value is not None:
+            try:
+                gripper_closed = float(gripper_value) <= self.gripper_closed_threshold
+            except Exception:
+                gripper_closed = False
 
-        info_dict = {
-            "target_object": parsed_objs,
-            "dino_boxes": boxes_xyxy.tolist() if isinstance(boxes_xyxy, torch.Tensor) else [],
-            "phrases": phrases,
-            "box_source": "dino" if self.last_query_used_dino else "tracker",
-        }
+        grasped_estimate = bool(
+            min_object_distance is not None
+            and min_object_distance < self.grasp_distance_threshold
+            and (gripper_closed or self._recent_gripper_close())
+        )
 
-        factors = []
-        if len(boxes) > 0:
-            num_objects = len(boxes)
-            info_dict["num_objects"] = num_objects
-            if num_objects > 3:
-                factors.append("Multiple objects detected")
-        else:
-            info_dict["tracker_state"] = "missing"
+        info_dict["object_motion_max"] = max_motion
+        info_dict["moving_phrases"] = moving_phrases
+        info_dict["movement_by_phrase"] = movement_by_phrase
+        info_dict["grasped_estimate"] = grasped_estimate
 
+        if moving_phrases and not grasped_estimate:
+            self.current_horizon = min(self.current_horizon, self.get_chunk_size(1))
+            self.needs_interruption = True
+            info_dict.setdefault("factors", []).append(
+                f"Object moving without grasp ({','.join(moving_phrases)})"
+            )
 
-        if robot_state and "ee_position" in robot_state and len(boxes) > 0:
-            ee_pos = np.array(robot_state["ee_position"])
-            min_distance = float("inf")
-            for box in boxes:
-                box_center = np.array([box[0], box[1]])
-                distance = np.linalg.norm(ee_pos[:2] - box_center)
-                if distance < min_distance:
-                    min_distance = distance
-
-            info_dict["min_object_distance"] = min_distance
-            if min_distance < 0.1:
-                factors.append("Close to object (grasping phase)")
-
-        # if factors:
-        #     factor_count = len(factors)
-        #     logging.info(f"factor_count: {factor_count}")
-        #     reduction_factor = max(0.4, 1.0 - factor_count * 0.3)
-        #     self.current_horizon = max(self.min_h, int(prev_h * reduction_factor))
-        self.needs_interruption = False
-        prev_h = self.current_horizon
-        continuity_factor = self.compute_continuity()
-        if continuity_factor:
-            if continuity_factor.startswith("High"):
-                self.current_horizon = min(self.max_h, prev_h + 5)
-            else:
-                self.set_interruption()
-                logger.info("confidence: 2")
-                self.current_horizon = max(self.min_h, self.get_chunk_size(2))
-
-        factors.append(continuity_factor)
-        info_dict["factors"] = factors
+        logger.info(f"current_horizon in heuristic: {self.current_horizon}")
         return self.current_horizon, info_dict

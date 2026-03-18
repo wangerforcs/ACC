@@ -149,7 +149,8 @@ class AdaptiveActionChunker:
         self.action_history_window = action_history_window
         self.continuity_threshold = continuity_threshold 
         # 状态记录
-        self.current_horizon = (self.max_h + self.min_h) // 2
+        self.chunk_levels = 5
+        self.current_horizon = self.get_chunk_size(self.chunk_levels // 2)
         self.history = []
         # 动作历史记录，用于计算轨迹连续性
         self.action_history = []
@@ -167,7 +168,6 @@ class AdaptiveActionChunker:
         self.model = load_model(self.config_path, self.checkpoint_path, device=self.device)
         self.cached_boxes = None
         self.query_box_times = 0
-        self.chunk_levels = 5
 
     def get_runtime_config(self):
         return {
@@ -196,7 +196,7 @@ class AdaptiveActionChunker:
         
     def reset(self):
         """重置状态"""
-        self.current_horizon = (self.max_h + self.min_h) // 2
+        self.current_horizon = self.get_chunk_size(self.chunk_levels // 2)
         self.history = []
         self.action_history = []
         self.prev_continuity = None
@@ -370,7 +370,18 @@ class AdaptiveActionChunker:
     
     
     def compute_continuity(self):
-        continuity_factor = "High"
+        continuity_info = self.compute_continuity_info()
+        return continuity_info["label"]
+
+    def compute_continuity_info(self):
+        continuity_info = {
+            "label": "Unknown continuity",
+            "level": "unknown",
+            "score": None,
+            "delta": None,
+            "gripper_changed": False,
+            "ready": False,
+        }
         if len(self.action_history) > self.action_history_window:
             self.action_history = self.action_history[-self.action_history_window:]
         continuity = 0.0
@@ -384,15 +395,45 @@ class AdaptiveActionChunker:
             if self.action_history[-1][-1] - self.action_history[-2][-1] > 1.5: #不abs了吧就用正的减去负的
                 gripper_changed = True #闭合
             continuity /= (len(self.action_history) - 1)
-            
-            # 基于连续性调整chunk size
-            # 连续性高（动作变化小）可以增大chunk，连续性低（动作变化大）需要减小chunk
-            if continuity > self.continuity_threshold or (self.prev_continuity is not None and continuity - self.prev_continuity < -0.1): 
-                continuity_factor = f"Low continuity: {continuity:.4f}, gripper_changed: {gripper_changed}, prev_continuity: {self.prev_continuity}"
-            else:
-                continuity_factor = "High trajectory continuity"
-            logging.info(f"continuity: {continuity:.4f}, gripper_changed: {gripper_changed}, prev_continuity: {self.prev_continuity}")
 
+            prev_cont = self.prev_continuity
+            delta = None if prev_cont is None else (continuity - prev_cont)
+            continuity_info.update(
+                {
+                    "score": float(continuity),
+                    "delta": None if delta is None else float(delta),
+                    "gripper_changed": gripper_changed,
+                    "ready": True,
+                }
+            )
+
+            thr = max(float(self.continuity_threshold), 1e-6)
+            if continuity <= 0.4 * thr:
+                level = "very_high"
+                label = f"Very high trajectory continuity: {continuity:.4f}"
+            elif continuity <= 0.8 * thr:
+                level = "high"
+                label = f"High trajectory continuity: {continuity:.4f}"
+            elif continuity <= 1.25 * thr:
+                level = "medium"
+                label = f"Medium trajectory continuity: {continuity:.4f}"
+            elif continuity <= 1.75 * thr:
+                level = "low"
+                label = f"Low continuity: {continuity:.4f}, gripper_changed: {gripper_changed}, prev_continuity: {prev_cont}"
+            else:
+                level = "very_low"
+                label = f"Very low continuity: {continuity:.4f}, gripper_changed: {gripper_changed}, prev_continuity: {prev_cont}"
+
+            continuity_info["level"] = level
+            continuity_info["label"] = label
+            logging.info(
+                "continuity: %.4f, level: %s, gripper_changed: %s, prev_continuity: %s, delta: %s",
+                continuity,
+                level,
+                gripper_changed,
+                prev_cont,
+                delta,
+            )
             self.prev_continuity = continuity
         else:
             gripper_changed = False
@@ -400,8 +441,15 @@ class AdaptiveActionChunker:
                 if self.action_history[-1][-1] - self.action_history[-2][-1] > 1.5: #不abs了吧就用正的减去负的
                     gripper_changed = True #闭合
             logging.info(f"gripper_changed: {gripper_changed}")
+            continuity_info.update(
+                {
+                    "label": "Continuity warmup",
+                    "level": "warmup",
+                    "gripper_changed": gripper_changed,
+                }
+            )
             self.prev_continuity = None #感觉这个很关键
-        return continuity_factor
+        return continuity_info
     
     def set_interruption(self):
         self.needs_interruption = True
@@ -471,7 +519,8 @@ class AdaptiveActionChunker:
         peak_thresh_high = 0.8
         peak_thresh_low = 0.3
         
-        continuity_factor = self.compute_continuity()
+        continuity_info = self.compute_continuity_info()
+        continuity_factor = continuity_info["label"]
         
         # 遍历每一层
         for layer_idx in range(vla_attention_map.shape[0]):
@@ -502,8 +551,9 @@ class AdaptiveActionChunker:
         best_kl = float(np.min(kl_scores)) if kl_scores else 10.0
         avg_uncertainty = float(np.mean(uncertainty_scores)) if uncertainty_scores else -1.0
 
-        is_high_cont = continuity_factor.startswith("High")
-        is_low_cont = continuity_factor.startswith("Low")
+        continuity_level = continuity_info["level"]
+        is_high_cont = continuity_level in {"high", "very_high"}
+        is_low_cont = continuity_level in {"low", "very_low"}
 
         confidence = 2  # default -> chunk 15
         # 不想用kl来判断
@@ -540,7 +590,12 @@ class AdaptiveActionChunker:
             confidence = 2
 
         
-        logging.info(f"confidence: {confidence}, continuity_factor: {continuity_factor}")
+        logging.info(
+            "confidence: %s, continuity_factor: %s, continuity_level: %s",
+            confidence,
+            continuity_factor,
+            continuity_level,
+        )
                 
         prev_h = self.current_horizon        
         self.current_horizon = max(self.min_h, self.get_chunk_size(confidence))
@@ -573,15 +628,23 @@ class AdaptiveActionChunker:
             # 如果解析失败，保守策略
             return self.min_h, {"reason": "parse_fail"}
 
-        # 2. 获取 Ground Truth (DINO)
-        boxes_cxcywh, _, _, _, _ = self.get_dino_boxes(image, parsed_objs)
+        # 2. 获取 Ground Truth / tracked boxes
+        boxes_cxcywh, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
         boxes = boxes_cxcywh
         
         # 3. 初始化信息字典
         info_dict = {
             "target_object": parsed_objs,
-            "dino_boxes": boxes.tolist()
+            "dino_boxes": (
+                boxes_xyxy.tolist()
+                if isinstance(boxes_xyxy, torch.Tensor)
+                else boxes.tolist()
+            ),
         }
+        if phrases:
+            info_dict["phrases"] = phrases
+        if hasattr(self, "last_query_used_dino"):
+            info_dict["box_source"] = "dino" if self.last_query_used_dino else "tracker"
         
         factors = []
         # 4.1 基于目标检测的启发式
@@ -591,6 +654,8 @@ class AdaptiveActionChunker:
             info_dict["num_objects"] = num_objects
             if num_objects > 3:
                 factors.append("Multiple objects detected")
+        elif hasattr(self, "trackers"):
+            info_dict["tracker_state"] = "missing"
         
         
         # 4.2 基于机器人状态的启发式
@@ -623,18 +688,26 @@ class AdaptiveActionChunker:
         
         self.needs_interruption = False
         prev_h = self.current_horizon        
-        continuity_factor = self.compute_continuity()
-            
-        if continuity_factor:
-            if continuity_factor.startswith("High"):
-                self.current_horizon = min(self.max_h, prev_h + 5)
-                reason = continuity_factor
-            else:
-                self.set_interruption()
-                logging.info("confidence: 2")
-                self.current_horizon = max(self.min_h, self.get_chunk_size(2))
-        
+        continuity_info = self.compute_continuity_info()
+        continuity_factor = continuity_info["label"]
+        continuity_level = continuity_info["level"]
+
+        if continuity_level == "very_high":
+            self.current_horizon = min(self.max_h, prev_h + 5)
+        elif continuity_level == "high":
+            self.current_horizon = min(self.max_h, prev_h + 3)
+        elif continuity_level == "medium":
+            self.current_horizon = prev_h
+        elif continuity_level == "low":
+            self.current_horizon = max(self.min_h, min(prev_h - 3, self.get_chunk_size(2)))
+        elif continuity_level == "very_low":
+            self.set_interruption()
+            logging.info("continuity very low -> reduce to cautious chunk")
+            self.current_horizon = max(self.min_h, self.get_chunk_size(1))
+
         factors.append(continuity_factor)
+        info_dict["continuity_level"] = continuity_level
+        info_dict["continuity_score"] = continuity_info["score"]
         info_dict["factors"] = factors
         
         return self.current_horizon, info_dict

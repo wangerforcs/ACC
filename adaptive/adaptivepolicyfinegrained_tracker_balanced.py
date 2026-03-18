@@ -18,6 +18,15 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
     - preserve SR better on goal/libero_10 by favoring `20/25` as the main cruise band
     """
 
+    def get_runtime_config(self):
+        config = super().get_runtime_config()
+        config.update(
+            {
+                "policy_type": "finegrained_tracker_balanced",
+            }
+        )
+        return config
+
     def ValueFunc(self, image, instruction, vla_attention_map, use_uncertainty=True, use_coverage=True):
         if isinstance(vla_attention_map, list) and len(vla_attention_map) > 0:
             if all(isinstance(layer, list) for layer in vla_attention_map) and all(
@@ -54,7 +63,8 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
         peak_thresh_high = 0.8
         peak_thresh_low = 0.4
 
-        continuity_factor = self.compute_continuity()
+        continuity_info = self.compute_continuity_info()
+        continuity_factor = continuity_info["label"]
 
         for layer_idx in range(vla_attention_map.shape[0]):
             layer_attn = vla_attention_map[layer_idx]
@@ -76,8 +86,9 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
         best_kl = float(np.min(kl_scores)) if kl_scores else 10.0
         avg_uncertainty = float(np.mean(uncertainty_scores)) if uncertainty_scores else -1.0
 
-        is_high_cont = bool(continuity_factor and continuity_factor.startswith("High"))
-        is_low_cont = bool(continuity_factor and continuity_factor.startswith("Low"))
+        continuity_level = continuity_info["level"]
+        is_high_cont = continuity_level in {"high", "very_high"}
+        is_low_cont = continuity_level in {"low", "very_low"}
 
         # Default to chunk 20, then move to 25 only for clearly stable cases.
         confidence = 3
@@ -128,6 +139,7 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
             {
                 "confidence": confidence,
                 "continuity_factor": continuity_factor,
+                "continuity_level": continuity_level,
                 "peak_high_ratio": peak_high_ratio,
                 "peak_low_ratio": peak_low_ratio,
                 "avg_coverage": avg_coverage,
@@ -189,14 +201,21 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
 
         self.needs_interruption = False
         prev_h = self.current_horizon
-        continuity_factor = self.compute_continuity()
-        if continuity_factor:
-            if continuity_factor.startswith("High"):
-                self.current_horizon = min(self.max_h, prev_h + 5)
-            else:
-                # Compared with heavy, fall back to chunk 20 instead of rushing to 25/30.
-                self.current_horizon = max(self.min_h, self.get_chunk_size(3))
+        continuity_info = self.compute_continuity_info()
+        continuity_factor = continuity_info["label"]
+        continuity_level = continuity_info["level"]
+        if continuity_level == "very_high":
+            self.current_horizon = min(self.max_h, prev_h + 5)
+        elif continuity_level == "high":
+            self.current_horizon = min(self.max_h, prev_h + 3)
+        elif continuity_level == "medium":
+            self.current_horizon = prev_h
+        elif continuity_level == "low":
+            self.current_horizon = max(self.min_h, min(prev_h - 2, self.get_chunk_size(3)))
+        elif continuity_level == "very_low":
+            self.current_horizon = max(self.min_h, self.get_chunk_size(2))
 
         factors.append(continuity_factor)
+        info_dict["continuity_level"] = continuity_level
         info_dict["factors"] = factors
         return self.current_horizon, info_dict
