@@ -1,4 +1,5 @@
 import logging
+from collections import deque
 from typing import Any, List, Optional, Sequence, Tuple
 
 import cv2
@@ -26,9 +27,16 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         dino_refresh_interval: int = 20,
         dino_accept_iou: float = 0.1,
         dino_accept_center_dist: float = 0.15,
-        object_motion_threshold: float = 0.03,
-        grasp_distance_threshold: float = 0.08,
-        gripper_closed_threshold: float = 0.2,
+        object_motion_threshold: float = 0.01,
+        object_motion_lookback: int = 3,
+        object_motion_exit_threshold: float = 0.006,
+        object_motion_enter_persistence: int = 1,
+        object_motion_exit_persistence: int = 5,
+        gripper_box_half_size_px: int = 18,
+        gripper_contact_iou_threshold: float = 0.02,
+        gripper_contact_center_dist_threshold: float = 0.08,
+        gripper_contact_persistence: int = 2,
+        gripper_closed_threshold: float = -0.039,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -37,7 +45,14 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.dino_accept_iou = float(dino_accept_iou)
         self.dino_accept_center_dist = float(dino_accept_center_dist)
         self.object_motion_threshold = float(object_motion_threshold)
-        self.grasp_distance_threshold = float(grasp_distance_threshold)
+        self.object_motion_lookback = max(1, int(object_motion_lookback))
+        self.object_motion_exit_threshold = float(object_motion_exit_threshold)
+        self.object_motion_enter_persistence = max(1, int(object_motion_enter_persistence))
+        self.object_motion_exit_persistence = max(1, int(object_motion_exit_persistence))
+        self.gripper_box_half_size_px = max(1, int(gripper_box_half_size_px))
+        self.gripper_contact_iou_threshold = float(gripper_contact_iou_threshold)
+        self.gripper_contact_center_dist_threshold = float(gripper_contact_center_dist_threshold)
+        self.gripper_contact_persistence = max(1, int(gripper_contact_persistence))
         self.gripper_closed_threshold = float(gripper_closed_threshold)
         self.trackers: List[Any] = []
         self.tracker_phrases: List[str] = []
@@ -46,7 +61,11 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.box_query_count = 0
         self.last_query_used_dino = False
         self.active_tracker_backend: Optional[str] = None
-        self.prev_object_centers: dict[str, np.ndarray] = {}
+        self.object_center_history: dict[str, deque[np.ndarray]] = {}
+        self.object_motion_state: dict[str, bool] = {}
+        self.object_motion_counts: dict[str, int] = {}
+        self.grasped_phrases: set[str] = set()
+        self.gripper_contact_counts: dict[str, int] = {}
 
     def reset(self):
         super().reset()
@@ -57,7 +76,11 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.box_query_count = 0
         self.last_query_used_dino = False
         self.active_tracker_backend = None
-        self.prev_object_centers = {}
+        self.object_center_history = {}
+        self.object_motion_state = {}
+        self.object_motion_counts = {}
+        self.grasped_phrases = set()
+        self.gripper_contact_counts = {}
 
     def get_runtime_config(self):
         config = super().get_runtime_config()
@@ -69,7 +92,14 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
                 "dino_accept_iou": self.dino_accept_iou,
                 "dino_accept_center_dist": self.dino_accept_center_dist,
                 "object_motion_threshold": self.object_motion_threshold,
-                "grasp_distance_threshold": self.grasp_distance_threshold,
+                "object_motion_lookback": self.object_motion_lookback,
+                "object_motion_exit_threshold": self.object_motion_exit_threshold,
+                "object_motion_enter_persistence": self.object_motion_enter_persistence,
+                "object_motion_exit_persistence": self.object_motion_exit_persistence,
+                "gripper_box_half_size_px": self.gripper_box_half_size_px,
+                "gripper_contact_iou_threshold": self.gripper_contact_iou_threshold,
+                "gripper_contact_center_dist_threshold": self.gripper_contact_center_dist_threshold,
+                "gripper_contact_persistence": self.gripper_contact_persistence,
                 "gripper_closed_threshold": self.gripper_closed_threshold,
             }
         )
@@ -209,11 +239,13 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         boxes_xyxy = info_dict.get("dino_boxes", [])
         phrases = info_dict.get("phrases", [])
         if not boxes_xyxy or not phrases:
-            self.prev_object_centers = {}
-            return 0.0, [], {}
+            self.object_center_history = {}
+            self.object_motion_state = {}
+            self.object_motion_counts = {}
+            return 0.0, [], {}, {}
 
-        centers_now = {}
         movement_by_phrase = {}
+        motion_vector_by_phrase = {}
         for idx, phrase in enumerate(phrases):
             if idx >= len(boxes_xyxy):
                 continue
@@ -222,17 +254,135 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
                 continue
             x1, y1, x2, y2 = [float(v) for v in box]
             center = np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=np.float32)
-            centers_now[phrase] = center
-            prev_center = self.prev_object_centers.get(phrase)
+            history = self.object_center_history.setdefault(
+                phrase,
+                deque(maxlen=self.object_motion_lookback + 1),
+            )
+            prev_center = history[0] if len(history) >= self.object_motion_lookback else None
             if prev_center is not None:
-                movement_by_phrase[phrase] = float(np.linalg.norm(center - prev_center))
+                motion_vec = center - prev_center
+                motion_vector_by_phrase[phrase] = motion_vec
+                movement_by_phrase[phrase] = float(np.linalg.norm(motion_vec))
+            history.append(center)
 
-        self.prev_object_centers = centers_now
+        active_phrases = set(phrases)
+        self.object_center_history = {
+            phrase: history
+            for phrase, history in self.object_center_history.items()
+            if phrase in active_phrases
+        }
+        self.object_motion_state = {
+            phrase: state
+            for phrase, state in self.object_motion_state.items()
+            if phrase in active_phrases
+        }
+        self.object_motion_counts = {
+            phrase: count
+            for phrase, count in self.object_motion_counts.items()
+            if phrase in active_phrases
+        }
         max_motion = max(movement_by_phrase.values()) if movement_by_phrase else 0.0
-        moving_phrases = [
-            phrase for phrase, dist in movement_by_phrase.items() if dist > self.object_motion_threshold
-        ]
-        return max_motion, moving_phrases, movement_by_phrase
+        moving_phrases = []
+        for phrase, dist in movement_by_phrase.items():
+            prev_state = self.object_motion_state.get(phrase, False)
+            count = self.object_motion_counts.get(phrase, 0)
+            enter = dist > self.object_motion_threshold
+            stay = dist > self.object_motion_exit_threshold
+
+            if prev_state:
+                next_state = stay
+                next_count = 0 if next_state else count + 1
+                if next_count >= self.object_motion_exit_persistence:
+                    next_state = False
+                    next_count = 0
+            else:
+                next_count = count + 1 if enter else 0
+                next_state = next_count >= self.object_motion_enter_persistence
+                if next_state:
+                    next_count = 0
+
+            self.object_motion_state[phrase] = next_state
+            self.object_motion_counts[phrase] = next_count
+            if next_state:
+                moving_phrases.append(phrase)
+        return max_motion, moving_phrases, movement_by_phrase, motion_vector_by_phrase
+
+    def _project_gripper_to_image_box(self, robot_state):
+        if not robot_state:
+            return None
+        ee_position = robot_state.get("ee_position")
+        world_to_image = robot_state.get("camera_world_to_image")
+        camera_resolution = robot_state.get("camera_resolution")
+        if ee_position is None or world_to_image is None or camera_resolution is None:
+            return None
+
+        try:
+            from robosuite.utils.camera_utils import project_points_from_world_to_camera
+
+            point = np.array([[ee_position[0], ee_position[1], ee_position[2]]], dtype=np.float32)
+            transform = np.array(world_to_image, dtype=np.float32)
+            pixel_h = int(camera_resolution[0])
+            pixel_w = int(camera_resolution[1])
+            projected = project_points_from_world_to_camera(
+                points=point,
+                world_to_camera_transform=transform,
+                camera_height=pixel_h,
+                camera_width=pixel_w,
+            )
+            row = int(projected[0][0])
+            col = int(projected[0][1])
+            col = (pixel_w - 1) - col
+            half = self.gripper_box_half_size_px
+            x1 = max(0, col - half)
+            y1 = max(0, row - half)
+            x2 = min(pixel_w - 1, col + half)
+            y2 = min(pixel_h - 1, row + half)
+            if x2 <= x1 or y2 <= y1:
+                return None
+            return torch.tensor(
+                [
+                    x1 / max(pixel_w, 1),
+                    y1 / max(pixel_h, 1),
+                    x2 / max(pixel_w, 1),
+                    y2 / max(pixel_h, 1),
+                ],
+                dtype=torch.float32,
+            )
+        except Exception:
+            return None
+
+    def _update_projected_grasp_state(self, info_dict, robot_state, gripper_closed: bool):
+        boxes_xyxy = info_dict.get("dino_boxes", [])
+        phrases = info_dict.get("phrases", [])
+        gripper_box = self._project_gripper_to_image_box(robot_state)
+        if not gripper_closed or gripper_box is None:
+            self.gripper_contact_counts = {}
+            self.grasped_phrases = set()
+            return gripper_box, [], False
+
+        contact_phrases = []
+        next_counts = {}
+        for idx, phrase in enumerate(phrases):
+            if idx >= len(boxes_xyxy):
+                continue
+            box = boxes_xyxy[idx]
+            if len(box) != 4:
+                continue
+            phrase_box = torch.tensor([float(v) for v in box], dtype=torch.float32)
+            iou = self._single_box_iou(gripper_box, phrase_box)
+            center_dist = self._single_box_center_distance(gripper_box, phrase_box)
+            is_contact = (
+                iou >= self.gripper_contact_iou_threshold
+                or center_dist <= self.gripper_contact_center_dist_threshold
+            )
+            if is_contact:
+                count = self.gripper_contact_counts.get(phrase, 0) + 1
+                next_counts[phrase] = count
+                if count >= self.gripper_contact_persistence:
+                    contact_phrases.append(phrase)
+        self.gripper_contact_counts = next_counts
+        self.grasped_phrases = set(contact_phrases)
+        return gripper_box, contact_phrases, bool(contact_phrases)
 
     def _boxes_are_consistent(
         self,
@@ -469,34 +619,83 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
             image, instruction, robot_state=robot_state, object_state=object_state
         )
 
-        max_motion, moving_phrases, movement_by_phrase = self._compute_object_motion(info_dict)
-        min_object_distance = info_dict.get("min_object_distance")
+        max_motion, moving_phrases, movement_by_phrase, _ = self._compute_object_motion(info_dict)
         gripper_value = robot_state.get("gripper_state") if robot_state else None
 
         gripper_closed = False
         if gripper_value is not None:
             try:
-                gripper_closed = float(gripper_value) <= self.gripper_closed_threshold
+                gripper_closed = float(gripper_value) >= self.gripper_closed_threshold
             except Exception:
                 gripper_closed = False
+        elif getattr(self, "gripper_state", None) == "closed":
+            gripper_closed = True
 
-        grasped_estimate = bool(
-            min_object_distance is not None
-            and min_object_distance < self.grasp_distance_threshold
-            and (gripper_closed or self._recent_gripper_close())
+        gripper_box, gripper_contact_phrases, grasped_estimate = self._update_projected_grasp_state(
+            info_dict, robot_state, gripper_closed
+        )
+        recent_gripper_close = self._recent_gripper_close()
+        contact_phrases = set(gripper_contact_phrases)
+        grasped_phrase_set = set(self.grasped_phrases)
+
+        phrase_states = {}
+        penalty_phrases = []
+        penalty_motion = 0.0
+        for phrase, motion in movement_by_phrase.items():
+            moving_now = phrase in moving_phrases
+            in_contact = phrase in contact_phrases
+            grasp_latched = phrase in grasped_phrase_set
+            closing_now = bool(gripper_closed or recent_gripper_close)
+
+            if grasp_latched:
+                state = "grasped"
+            elif in_contact or closing_now:
+                state = "contact_or_closing"
+            elif moving_now:
+                state = "free_moving"
+            else:
+                state = "stable"
+
+            phrase_states[phrase] = state
+            if state == "free_moving":
+                penalty_phrases.append(phrase)
+                penalty_motion = max(penalty_motion, float(motion))
+
+        grasp_protected = any(
+            state in {"contact_or_closing", "grasped"} for state in phrase_states.values()
         )
 
         info_dict["object_motion_max"] = max_motion
         info_dict["moving_phrases"] = moving_phrases
         info_dict["movement_by_phrase"] = movement_by_phrase
+        info_dict["gripper_box"] = gripper_box.tolist() if gripper_box is not None else None
+        info_dict["gripper_contact_phrases"] = gripper_contact_phrases
+        info_dict["grasped_phrases"] = sorted(self.grasped_phrases)
         info_dict["grasped_estimate"] = grasped_estimate
-
-        if moving_phrases and not grasped_estimate:
-            self.current_horizon = min(self.current_horizon, self.get_chunk_size(1))
+        info_dict["phrase_states"] = phrase_states
+        info_dict["grasp_protected"] = grasp_protected
+        info_dict["motion_penalty_phrases"] = penalty_phrases
+        info_dict["motion_penalty_max"] = penalty_motion
+        
+        if penalty_phrases:
+            self.current_horizon = min(self.current_horizon, self.get_chunk_size(0))
             self.needs_interruption = True
             info_dict.setdefault("factors", []).append(
-                f"Object moving without grasp ({','.join(moving_phrases)})"
+                f"Object moving without grasp ({','.join(penalty_phrases)})"
+            )
+            logger.info(
+                "Reducing horizon due to object motion without grasp: penalty_phrases=%s, max_motion=%.4f",
+                penalty_phrases,
+                penalty_motion,
             )
 
+        logger.info(
+            "phrase_states: %s, gripper_value=%s, gripper_closed=%s, recent_gripper_close=%s, grasped_estimate=%s",
+            phrase_states,
+            gripper_value,
+            gripper_closed,
+            recent_gripper_close,
+            grasped_estimate,
+        )
         logger.info(f"current_horizon in heuristic: {self.current_horizon}")
         return self.current_horizon, info_dict

@@ -30,35 +30,35 @@
   "copied": [
     {
       "path": "LIBERO/libero/libero/bddl_files/libero_dynamic_examples/test_dynamic_example.bddl",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/libero/libero/envs/bddl_base_domain.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/libero/libero/envs/problems/__init__.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/libero/libero/envs/problems/libero_dynamic_floor_manipulation.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/libero/libero/envs/regions/__init__.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/modified_libero_files.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/scripts/create_dynamic_libero_bddl_example.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/scripts/render_dynamic_libero_example.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/.git/description",
@@ -86,7 +86,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -102,15 +102,15 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_balanced.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_heavy.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
@@ -161,39 +161,39 @@
       "changed": false
     },
     {
-      "path": "adaptive/test_box_to_token_mask.py",
+      "path": "adaptive/tests/test_box_to_token_mask.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_dino_libero_env.py",
+      "path": "adaptive/tests/test_dino_libero_env.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_dynamic_libero_env.py",
-      "changed": true
-    },
-    {
-      "path": "adaptive/test_grounding_dino.py",
+      "path": "adaptive/tests/test_dynamic_libero_env.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_opencv_tracker_benchmark.py",
+      "path": "adaptive/tests/test_grounding_dino.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_sam2_image.py",
+      "path": "adaptive/tests/test_opencv_tracker_benchmark.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_sam2_rollout.py",
+      "path": "adaptive/tests/test_sam2_image.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_sam2_video.py",
+      "path": "adaptive/tests/test_sam2_rollout.py",
       "changed": false
     },
     {
-      "path": "adaptive/test_tracker_video.py",
+      "path": "adaptive/tests/test_sam2_video.py",
+      "changed": false
+    },
+    {
+      "path": "adaptive/tests/test_tracker_video.py",
       "changed": false
     },
     {
@@ -218,7 +218,7 @@
     },
     {
       "path": "evalpi05.yaml",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_adaptive.py",
@@ -226,23 +226,23 @@
     },
     {
       "path": "evalpi05_adaptivefine_balanced.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_adaptivefine_dynamic.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_adaptivefine_heavy.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_adaptivefine_norm.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_power_replay.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "evalpi05_random_monitor.py",
@@ -266,7 +266,7 @@
     },
     {
       "path": "sync_to_accrepo.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "trackersscoregood/libero_10.txt",

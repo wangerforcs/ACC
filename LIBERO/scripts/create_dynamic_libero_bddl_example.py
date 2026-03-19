@@ -1,56 +1,83 @@
 """
-Create a dynamic-task BDDL by copying an existing LIBERO BDDL and changing the
-problem name so it maps to Libero_Dynamic_Floor_Manipulation.
+Create a clean dynamic-task BDDL with only the task-essential objects.
 
-This is the minimum plumbing needed because LIBERO chooses the environment
-class from the BDDL problem name.
+By default this emits a minimal orange-juice-into-basket scene rather than
+copying all distractor objects from the original LIBERO task.
 """
 
 from pathlib import Path
 import argparse
 
 
-SOURCE_DEFAULT = (
-    "/home/wangzb/vlash/LIBERO/libero/libero/bddl_files/libero_object/"
-    "pick_up_the_orange_juice_and_place_it_in_the_basket.bddl"
-)
 TARGET_DIR_DEFAULT = (
     "/home/wangzb/vlash/LIBERO/libero/libero/bddl_files/libero_dynamic_examples"
 )
 TARGET_PROBLEM_NAME = "LIBERO_Dynamic_Floor_Manipulation"
+MINIMAL_DYNAMIC_BDDL = f"""(define (problem {TARGET_PROBLEM_NAME})
+  (:domain robosuite)
+  (:language Pick the orange juice and place it in the basket)
+    (:regions
+      (bin_region
+          (:target floor)
+          (:ranges (
+              (-0.01 0.25 0.01 0.27)
+            )
+          )
+      )
+      (target_object_region
+          (:target floor)
+          (:ranges (
+              (0.025 -0.125 0.07500000000000001 -0.07500000000000001)
+            )
+          )
+      )
+      (contain_region
+          (:target basket_1)
+      )
+    )
 
+  (:fixtures
+    floor - floor
+  )
 
-def patch_problem_name(bddl_text: str, new_problem_name: str) -> str:
-    lines = bddl_text.splitlines()
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("(define (problem "):
-            lines[i] = f"(define (problem {new_problem_name})"
-            break
-    else:
-        raise ValueError("Could not find '(define (problem ...)' in BDDL file.")
-    return "\n".join(lines) + "\n"
+  (:objects
+    orange_juice_1 - orange_juice
+    basket_1 - basket
+  )
+
+  (:obj_of_interest
+    orange_juice_1
+    basket_1
+  )
+
+  (:init
+    (On orange_juice_1 floor_target_object_region)
+    (On basket_1 floor_bin_region)
+  )
+
+  (:goal
+    (And (In orange_juice_1 basket_1_contain_region))
+  )
+
+)
+"""
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source-bddl", type=str, default=SOURCE_DEFAULT)
     parser.add_argument("--target-dir", type=str, default=TARGET_DIR_DEFAULT)
     parser.add_argument(
         "--target-name",
         type=str,
-        default="pick_up_the_orange_juice_and_place_it_in_the_moving_basket.bddl",
+        default="test_dynamic_example.bddl",
     )
     args = parser.parse_args()
 
-    source_path = Path(args.source_bddl)
     target_dir = Path(args.target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / args.target_name
 
-    text = source_path.read_text()
-    patched = patch_problem_name(text, TARGET_PROBLEM_NAME)
-    target_path.write_text(patched)
+    target_path.write_text(MINIMAL_DYNAMIC_BDDL)
 
     print(f"Wrote dynamic example BDDL to: {target_path}")
     print("Use it with:")

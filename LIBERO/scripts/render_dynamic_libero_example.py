@@ -33,11 +33,14 @@ def main():
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--robot", type=str, default="Panda")
     parser.add_argument("--moving-object-name", type=str, default="orange_juice_1")
-    parser.add_argument("--motion-axis", type=str, default="x")
+    parser.add_argument("--motion-axis", type=str, default="y")
     parser.add_argument("--motion-initial-speed", type=float, default=None)
     parser.add_argument("--motion-settle-steps", type=int, default=10)
     parser.add_argument("--motion-drive-steps", type=int, default=30)
     parser.add_argument("--motion-drive-speed", type=float, default=None)
+    parser.add_argument("--motion-end-speed", type=float, default=0.0)
+    parser.add_argument("--motion-return-enabled", type=lambda x: str(x).lower() == "true", default=False)
+    parser.add_argument("--motion-max-angular-speed", type=float, default=0.0)
     parser.add_argument("--motion-amplitude", type=float, default=0.05)
     parser.add_argument("--motion-frequency-hz", type=float, default=0.15)
     parser.add_argument("--print-position-every", type=int, default=1)
@@ -59,6 +62,9 @@ def main():
         motion_settle_steps=args.motion_settle_steps,
         motion_drive_steps=args.motion_drive_steps,
         motion_drive_speed=args.motion_drive_speed,
+        motion_end_speed=args.motion_end_speed,
+        motion_return_enabled=args.motion_return_enabled,
+        motion_max_angular_speed=args.motion_max_angular_speed,
         motion_amplitude=args.motion_amplitude,
         motion_frequency_hz=args.motion_frequency_hz,
     )

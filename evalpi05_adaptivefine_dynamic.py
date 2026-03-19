@@ -72,17 +72,20 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     dynamic_shell_task_id: int = 9
     dynamic_use_init_states: bool = False
     dynamic_moving_object_name: str = "orange_juice_1"
-    dynamic_motion_axis: str = "x"
-    dynamic_motion_amplitude: float = 0.05
-    dynamic_motion_frequency_hz: float = 0.15
+    dynamic_motion_axis: str = "y"
+    dynamic_motion_settle_steps: int = 10
+    dynamic_motion_drive_steps: int = 50
+    dynamic_motion_drive_speed: float = 0.005
+    dynamic_motion_end_speed: float = 0.0
+    dynamic_motion_return_enabled: bool = False
     dynamic_save_video: bool = True
     dynamic_video_dir: str = "outputs/eval/dynamic_videos"
     dynamic_video_fps: int = 20
 
     # Allow dynamic eval to bootstrap these from the default yaml instead of
     # requiring the full training config at parser construction time.
-    train_cfg: Any = None
-    policy: Any = None
+    # train_cfg: Any = None
+    # policy: Any = None
     default_eval_yaml: str = "/home/wangzb/vlash/evalpi05.yaml"
 
 
@@ -228,8 +231,11 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
             "camera_widths": self.observation_width,
             "moving_object_name": cfg.dynamic_moving_object_name,
             "motion_axis": cfg.dynamic_motion_axis,
-            "motion_amplitude": cfg.dynamic_motion_amplitude,
-            "motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
+            "motion_settle_steps": cfg.dynamic_motion_settle_steps,
+            "motion_drive_steps": cfg.dynamic_motion_drive_steps,
+            "motion_drive_speed": cfg.dynamic_motion_drive_speed,
+            "motion_end_speed": cfg.dynamic_motion_end_speed,
+            "motion_return_enabled": cfg.dynamic_motion_return_enabled,
         }
         env = OffScreenRenderEnv(**env_args)
         env.reset()
@@ -266,8 +272,11 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
     logging.info(f"Dynamic use init states: {cfg.dynamic_use_init_states}")
     logging.info(f"Dynamic moving object: {cfg.dynamic_moving_object_name}")
     logging.info(f"Dynamic motion axis: {cfg.dynamic_motion_axis}")
-    logging.info(f"Dynamic motion amplitude: {cfg.dynamic_motion_amplitude}")
-    logging.info(f"Dynamic motion frequency hz: {cfg.dynamic_motion_frequency_hz}")
+    logging.info(f"Dynamic motion settle steps: {cfg.dynamic_motion_settle_steps}")
+    logging.info(f"Dynamic motion drive steps: {cfg.dynamic_motion_drive_steps}")
+    logging.info(f"Dynamic motion drive speed: {cfg.dynamic_motion_drive_speed}")
+    logging.info(f"Dynamic motion end speed: {cfg.dynamic_motion_end_speed}")
+    logging.info(f"Dynamic motion return enabled: {cfg.dynamic_motion_return_enabled}")
     logging.info(f"Dynamic save video: {cfg.dynamic_save_video}")
     logging.info(f"Dynamic video dir: {cfg.dynamic_video_dir or (Path(cfg.output_dir) / 'dynamic_videos')}")
     logging.info("=" * 50)
@@ -358,8 +367,11 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
             "dynamic_use_init_states": cfg.dynamic_use_init_states,
             "dynamic_moving_object_name": cfg.dynamic_moving_object_name,
             "dynamic_motion_axis": cfg.dynamic_motion_axis,
-            "dynamic_motion_amplitude": cfg.dynamic_motion_amplitude,
-            "dynamic_motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
+            "dynamic_motion_settle_steps": cfg.dynamic_motion_settle_steps,
+            "dynamic_motion_drive_steps": cfg.dynamic_motion_drive_steps,
+            "dynamic_motion_drive_speed": cfg.dynamic_motion_drive_speed,
+            "dynamic_motion_end_speed": cfg.dynamic_motion_end_speed,
+            "dynamic_motion_return_enabled": cfg.dynamic_motion_return_enabled,
             "dynamic_save_video": cfg.dynamic_save_video,
             "dynamic_video_dir": cfg.dynamic_video_dir,
             "dynamic_video_fps": cfg.dynamic_video_fps,

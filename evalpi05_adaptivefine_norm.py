@@ -44,6 +44,57 @@ from adaptive.adaptivepolicyfinegrained_tracker_scoregate import AdaptiveActionC
 # from adaptive.adaptivepolicyfinegrained import AdaptiveActionChunker
 from adaptive.monitor import GPUMonitor
 
+
+def _unwrap_to_libero_env(env):
+    current = env
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if hasattr(current, "_env") and hasattr(current._env, "sim"):
+            return current
+        if hasattr(current, "env"):
+            current = current.env
+            continue
+        if hasattr(current, "unwrapped") and current.unwrapped is not current:
+            current = current.unwrapped
+            continue
+        break
+    return None
+
+
+def _extract_camera_projection(vec_env: gym.vector.VectorEnv, camera_name: str = "agentview"):
+    if not hasattr(vec_env, "envs") or not vec_env.envs:
+        return None
+
+    libero_env = _unwrap_to_libero_env(vec_env.envs[0])
+    if libero_env is None:
+        return None
+
+    try:
+        from robosuite.utils.camera_utils import get_camera_transform_matrix
+    except Exception as exc:
+        logging.warning(f"Failed to import robosuite camera utils: {exc}")
+        return None
+
+    try:
+        sim = libero_env._env.sim
+        height = int(getattr(libero_env, "observation_height", 256))
+        width = int(getattr(libero_env, "observation_width", 256))
+        world_to_image = get_camera_transform_matrix(
+            sim=sim,
+            camera_name=camera_name,
+            camera_height=height,
+            camera_width=width,
+        )
+        return {
+            "camera_name": camera_name,
+            "camera_world_to_image": np.array(world_to_image, dtype=np.float32),
+            "camera_resolution": (height, width),
+        }
+    except Exception as exc:
+        logging.warning(f"Failed to extract camera projection for {camera_name}: {exc}")
+        return None
+
 # =============================================================================
 # 1. 配置定义
 # =============================================================================
@@ -71,6 +122,7 @@ class VLASHEvalConfig:
     play_sounds: bool = False
     action_quant_ratio: int = 1
     inference_overlap_steps: int = 0
+    target_control_hz: float = 30.0
     # 注意：不再强制要求 single_task，评估时会从环境元数据提取
     single_task: Union[str, None] = None 
     task_ids: Union[List[int], None] = None
@@ -102,6 +154,8 @@ class VLASHEvalConfig:
     )
     
     def __post_init__(self):
+        if self.target_control_hz is not None and self.target_control_hz <= 0:
+            raise ValueError("target_control_hz must be positive when provided")
         if not isinstance(self.policy, PreTrainedConfig):
             policy_path = None
             cli_overrides = []
@@ -174,6 +228,7 @@ def _collect_eval_runtime_config(cfg: VLASHEvalConfig, adaptive_chunker):
         "adaptive_coverage_threshold": cfg.adaptive_coverage_threshold,
         "adaptive_continuity_threshold": cfg.adaptive_continuity_threshold,
         "adaptive_chunker_cls_path": cfg.adaptive_chunker_cls_path,
+        "target_control_hz": cfg.target_control_hz,
         "eval_batch_size": cfg.eval_batch_size,
         "max_episodes": cfg.max_episodes,
         "seed": cfg.seed,
@@ -219,6 +274,7 @@ def _log_effective_eval_setup(cfg: VLASHEvalConfig):
     logging.info(f"Use adaptive chunk: {cfg.use_adaptive_chunk}")
     logging.info(f"Enable gripper interruption: {cfg.enable_gripper_interruption}")
     logging.info(f"Inference overlap steps: {cfg.inference_overlap_steps}")
+    logging.info(f"Target control hz: {cfg.target_control_hz}")
     logging.info(f"Action quant ratio: {cfg.action_quant_ratio}")
     logging.info(f"Tracker logger names: {getattr(cfg, 'tracker_logger_names', [])}")
     if cfg.policy is not None:
@@ -280,10 +336,14 @@ class VLASHVectorAsyncManager:
         self.valid_chunk_size = self.current_chunk_size
         self.last_chunk_size = self.current_chunk_size
         
-        # 线程池：用于后台执行推理任务和自适应任务
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)  # 增加线程用于后台处理
+        # 推理和 background 分开，background 串行排队，保证“每步都提交”同时不并发写 chunker
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self.background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.next_chunk_future = None
-        self.background_future = None
+        self.background_futures = []
+        self.background_task_counter = 0
+        self.latest_consumed_background_task_id = -1
+        self.chunker_lock = threading.Lock()
         
         # 状态追踪
         self.current_chunks = None  # 形状: [Batch, Horizon, ActionDim]
@@ -310,15 +370,19 @@ class VLASHVectorAsyncManager:
         self.launch_step_intervals = []
         self.active_env_mask = np.ones(self.num_envs, dtype=bool)
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
+        self.camera_projection = None
+        self.latest_background_info = None
 
     def reset_state(self):
         """每个 Batch 开始前调用"""
         if self.next_chunk_future:
             self.next_chunk_future.cancel()
-        if self.background_future:
-            self.background_future.cancel()
+        for _, future in self.background_futures:
+            future.cancel()
         self.next_chunk_future = None
-        self.background_future = None
+        self.background_futures = []
+        self.background_task_counter = 0
+        self.latest_consumed_background_task_id = -1
         self.current_chunks = None
         self.chunk_index = 0
         # 重置视频帧列表
@@ -326,15 +390,18 @@ class VLASHVectorAsyncManager:
         # 添加与 rollout.py 一致的 policy.reset() 调用
         self.policy.reset()
         if self.adaptive_chunker:
-            self.adaptive_chunker.reset()
-            self.current_chunk_size = self.adaptive_chunker.current_horizon
+            with self.chunker_lock:
+                self.adaptive_chunker.reset()
+                self.current_chunk_size = self.adaptive_chunker.current_horizon
         else:
             self.current_chunk_size = self.n_action_steps
         self.inference_times = 0
         self.batch_env_step = 0
         self.last_launch_step = None
+        self.launch_step_intervals = []
         self.active_env_mask = np.ones(self.num_envs, dtype=bool)
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
+        self.latest_background_info = None
 
     def set_active_env_mask(self, active_mask):
         active_mask = np.asarray(active_mask, dtype=bool)
@@ -378,28 +445,108 @@ class VLASHVectorAsyncManager:
         video_dir = Path(self.video_output_dir)
         video_dir.mkdir(parents=True, exist_ok=True)
 
-        # 获取视频帧的尺寸
-        height, width, _ = self.video_images[0].shape
-
-        # 创建视频写入器
         video_path = video_dir / f"{filename}.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(video_path), fourcc, self.cfg.fps, (width, height))
+        frames = [np.asarray(img, dtype=np.uint8) for img in self.video_images]
 
-        # 写入视频帧
-        for img in self.video_images:
-            # 确保图像是BGR格式
-            if img.shape[-1] == 3:
-                # 如果是RGB格式，转换为BGR
-                frame = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            else:
-                frame = img
-            out.write(frame)
+        writer_used = None
+        try:
+            import imageio.v2 as imageio
 
-        # 释放视频写入器
-        out.release()
+            imageio.mimwrite(str(video_path), frames, fps=self.cfg.fps)
+            writer_used = "imageio"
+        except Exception:
+            try:
+                import mediapy as media
+
+                media.write_video(str(video_path), frames, fps=self.cfg.fps)
+                writer_used = "mediapy"
+            except Exception:
+                height, width, _ = frames[0].shape
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                out = cv2.VideoWriter(str(video_path), fourcc, self.cfg.fps, (width, height))
+                for img in frames:
+                    frame = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.shape[-1] == 3 else img
+                    out.write(frame)
+                out.release()
+                writer_used = "cv2"
+
         logging.info(f"Video saved to {video_path}")
+        logging.info(f"Video writer used: {writer_used}")
         self.video_images = []
+
+    def _annotate_debug_frame(self, frame):
+        annotated = frame.copy()
+        info = self.latest_background_info or {}
+        gripper_box = info.get("gripper_box")
+        if gripper_box is None:
+            return annotated
+
+        try:
+            height, width = annotated.shape[:2]
+            x1 = int(float(gripper_box[0]) * width)
+            y1 = int(float(gripper_box[1]) * height)
+            x2 = int(float(gripper_box[2]) * width)
+            y2 = int(float(gripper_box[3]) * height)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            contact_phrases = info.get("gripper_contact_phrases") or []
+            if contact_phrases:
+                cv2.putText(
+                    annotated,
+                    f"gripper: {','.join(contact_phrases)}",
+                    (x1, max(18, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+        except Exception:
+            return frame
+        return annotated
+
+    def _project_gripper_box_from_obs(self, raw_obs: Dict[str, Any]):
+        if self.camera_projection is None or "agent_pos" not in raw_obs:
+            return None
+        try:
+            from robosuite.utils.camera_utils import project_points_from_world_to_camera
+
+            agent_pos = raw_obs["agent_pos"][0]
+            point = np.array([[agent_pos[0], agent_pos[1], agent_pos[2]]], dtype=np.float32)
+            transform = np.array(self.camera_projection["camera_world_to_image"], dtype=np.float32)
+            height, width = self.camera_projection["camera_resolution"]
+            projected = project_points_from_world_to_camera(
+                points=point,
+                world_to_camera_transform=transform,
+                camera_height=int(height),
+                camera_width=int(width),
+            )
+            row = int(projected[0][0])
+            col = int(projected[0][1])
+            col = (int(width) - 1) - col
+            half = 18
+            x1 = max(0, col - half)
+            y1 = max(0, row - half)
+            x2 = min(int(width) - 1, col + half)
+            y2 = min(int(height) - 1, row + half)
+            return [
+                x1 / max(int(width), 1),
+                y1 / max(int(height), 1),
+                x2 / max(int(width), 1),
+                y2 / max(int(height), 1),
+            ]
+        except Exception:
+            return None
+
+    def _annotate_debug_frame_from_obs(self, frame, raw_obs: Dict[str, Any]):
+        frame_info = dict(self.latest_background_info or {})
+        current_gripper_box = self._project_gripper_box_from_obs(raw_obs)
+        if current_gripper_box is not None:
+            frame_info["gripper_box"] = current_gripper_box
+        previous_info = self.latest_background_info
+        self.latest_background_info = frame_info
+        annotated = self._annotate_debug_frame(frame)
+        self.latest_background_info = previous_info
+        return annotated
 
     def _prepare_batch_obs(self, raw_obs: Dict[str, Any], task_description: str):
         """
@@ -432,54 +579,106 @@ class VLASHVectorAsyncManager:
         
         return batch_input
 
+    def _log_step_state(
+        self,
+        current_step: int,
+        should_launch: bool,
+        gripper_change: bool,
+        background_info: Optional[Dict[str, Any]] = None,
+    ):
+        background_ready_count = sum(1 for _, future in self.background_futures if future.done())
+        background_pending_count = sum(1 for _, future in self.background_futures if not future.done())
+        background_factors = None
+        if background_info:
+            background_factors = background_info.get("factors")
+        elif self.latest_background_info:
+            background_factors = self.latest_background_info.get("factors")
+        logging.info(
+            "step=%s chunk_index=%s action_step=%s current_chunk_size=%s last_chunk_size=%s "
+            "should_launch=%s gripper_change=%s next_chunk_pending=%s background_pending=%s "
+            "background_ready=%s background_factors=%s",
+            self.batch_env_step,
+            self.chunk_index,
+            current_step,
+            self.current_chunk_size,
+            self.last_chunk_size,
+            should_launch,
+            gripper_change,
+            self.next_chunk_future is not None,
+            background_pending_count > 0,
+            background_ready_count > 0,
+            background_factors,
+        )
+
     def _inference_task(self, batch_obs_prepared):
         """在后台线程执行的推理函数"""
         with torch.inference_mode():
             actions = self.policy.predict_action_chunk(batch_obs_prepared)
             return actions.cpu().numpy() # [B, Horizon, ActionDim]
 
-    def _background_adaptive_task(self, image, instruction, robot_state=None):
+    def _background_adaptive_task(self, task_id, image, instruction, robot_state=None):
         """在后台线程执行的自适应chunk size调整"""
         if self.adaptive_chunker:
-            # 使用启发式策略调整chunk size
-            _, info = self.adaptive_chunker.adaptive_chunk_heuristic(image, instruction, robot_state)
-            # 注意：这里不直接更新current_chunk_size，而是在主线程中处理
-            return info
+            with self.chunker_lock:
+                _, info = self.adaptive_chunker.adaptive_chunk_heuristic(image, instruction, robot_state)
+                return {
+                    "task_id": task_id,
+                    "info": info,
+                    "current_horizon": self.adaptive_chunker.current_horizon,
+                }
         return {}
 
     def _maybe_launch_background_adaptive(self, raw_obs: Dict[str, Any], task_description: str):
-        """Submit a new adaptive task only if no previous task is still running."""
+        """Queue one adaptive task for every step on a serial background worker."""
         if not (self.adaptive_chunker and "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict)):
-            return
-        if self.background_future is not None and not self.background_future.done():
             return
 
         image = raw_obs["pixels"]["image"][0]
         robot_state = None
         if "agent_pos" in raw_obs:
-                agent_pos = raw_obs["agent_pos"][0]
-                robot_state = {
-                    "ee_position": agent_pos[:3],
-                    "gripper_state": agent_pos[-1],
-                }
-        self.background_future = self.executor.submit(
-            self._background_adaptive_task, image, task_description, robot_state
+            agent_pos = raw_obs["agent_pos"][0]
+            robot_state = {
+                "ee_position": agent_pos[:3],
+                "gripper_state": agent_pos[-1],
+            }
+            if self.camera_projection is not None:
+                robot_state.update(self.camera_projection)
+        task_id = self.background_task_counter
+        self.background_task_counter += 1
+        future = self.background_executor.submit(
+            self._background_adaptive_task, task_id, image, task_description, robot_state
         )
+        self.background_futures.append((task_id, future))
 
     def _consume_background_result_nonblocking(self):
         """Apply finished adaptive-task results without blocking the control loop."""
-        if self.background_future is None or not self.background_future.done():
+        if not self.background_futures:
             return None
-        try:
-            # logging.info("Consuming adaptive task result")
-            background_info = self.background_future.result()
-            self.current_chunk_size = self.adaptive_chunker.current_horizon
-            return background_info
-        except Exception as exc:
-            logging.warning(f"Background adaptive task failed: {exc}")
+        latest_result = None
+        remaining = []
+        for task_id, future in self.background_futures:
+            if future.done():
+                try:
+                    result = future.result()
+                    if result:
+                        latest_result = result
+                except Exception as exc:
+                    logging.warning(f"Background adaptive task failed: {exc}")
+            else:
+                remaining.append((task_id, future))
+        self.background_futures = remaining
+        if latest_result is None:
             return None
-        finally:
-            self.background_future = None
+        task_id = latest_result.get("task_id", -1)
+        if task_id < self.latest_consumed_background_task_id:
+            return None
+        self.latest_consumed_background_task_id = task_id
+        logging.info("Consuming adaptive task result task_id=%s", task_id)
+        # self.current_chunk_size = latest_result.get("current_horizon", self.current_chunk_size)
+        background_info = dict(latest_result.get("info") or {})
+        background_info["background_task_id"] = task_id
+        background_info["current_horizon"] = latest_result.get("current_horizon", self.current_chunk_size)
+        return background_info
 
     def launch_next_inference(self, raw_obs: Dict[str, Any], task_description: str):
         """启动后台推理"""
@@ -499,7 +698,7 @@ class VLASHVectorAsyncManager:
         self.last_chunk_size = self.valid_chunk_size
         self.next_chunk_future = None
         if self.adaptive_chunker is not None:
-            self.adaptive_chunker.action_history = []
+            # self.adaptive_chunker.action_history = []
             if reason is False and self.cfg.enable_gripper_interruption:
                 self.get_gripper_change_index()
         
@@ -529,67 +728,67 @@ class VLASHVectorAsyncManager:
         """
         if self.save_video:
             if 'image' in raw_obs["pixels"]:
-                self.video_images.append(raw_obs["pixels"]['image'][0])
+                self.video_images.append(
+                    self._annotate_debug_frame_from_obs(raw_obs["pixels"]['image'][0], raw_obs)
+                )
         should_launch = False
         gripper_change = False
         self._maybe_launch_background_adaptive(raw_obs, task_description)
         
         # 第一次和后面的逻辑合一了
+        background_info = None
         if self.current_chunks is None:
             if self.next_chunk_future is None:
                 self.launch_next_inference(raw_obs, task_description)
                 self.chunk_index = 0
             else:
-                self.chunk_index = self.overlap_steps
-                
-            # 阻塞等待结果（如果是预取的，这里会立即返回；如果是同步的，这里会等待）
+                self.chunk_index = self.overlap_steps                
             self.reset_chunk()
-            # self.current_chunks = self.next_chunk_future.result()
-            # self.next_chunk_future = None
             
             # 检查后台自适应任务是否完成
+            final_chunk = None
             background_info = self._consume_background_result_nonblocking()
             if background_info is not None:
-                logging.info(f"Adaptive chunk size: {self.current_chunk_size}")
+                self.latest_background_info = background_info
+                final_chunk = background_info.get("current_horizon")
+                logging.info(f"background horizon: {final_chunk}")
             
             # 获取注意力图并使用它进一步调整chunk size (只有在policy真正做chunk推理时才使用ValueFunc)
             if self.adaptive_chunker:
                 try:
                     attn_maps = self.policy.get_attn_maps(layers=self.target_layers, heads=range(8), force=True)
-                    # 使用注意力图调整chunk size
                     if attn_maps:
                         vla_attention_map = attn_maps #[layers, num_heads, seq_len]
-                        # 使用ValueFunc根据注意力图调整chunk size
-                        _, info = self.adaptive_chunker.ValueFunc(
-                            raw_obs["pixels"]['image'][0], 
-                            task_description, 
-                            vla_attention_map
-                        )
-                        # 更新当前chunk size
-                        self.current_chunk_size = self.adaptive_chunker.current_horizon
+                        with self.chunker_lock:
+                            _, info = self.adaptive_chunker.ValueFunc(
+                                raw_obs["pixels"]['image'][0], 
+                                task_description, 
+                                vla_attention_map
+                            )
+                            attention_chunk_size = self.adaptive_chunker.current_horizon
+                            if final_chunk is not None:
+                                final_chunk = min(attention_chunk_size, final_chunk)
+                            else:
+                                final_chunk = attention_chunk_size
                         # 立马根据Value func更新last_chunk_size，仅用当前指定的chunk size
-                        self.last_chunk_size = min(self.current_chunk_size, self.last_chunk_size)
-                        # 检查是否需要立即打断当前chunk
-                        if hasattr(self.adaptive_chunker, 'needs_interruption') and self.adaptive_chunker.needs_interruption:
-                            # 立即打断当前chunk，重置状态
-                            logging.info(f"Interrupting current chunk due to attention-based adjustment")
-                            should_launch = True
-                            # self.current_chunks = None
-                            # self.chunk_index = 0
-                            # 立即启动新的推理
-                            # self.launch_next_inference(raw_obs, task_description)
-                        logging.info(f"Attention-based chunk size: {self.current_chunk_size}")
+                        # self.last_chunk_size = min(attention_chunk_size, self.last_chunk_size)
+                        logging.info(f"Attention-based chunk size: {attention_chunk_size}")
                 except Exception as e:
                     import traceback
                     logging.warning(f"Failed to get attention maps: {e}")
                     traceback.print_exc()
+            if final_chunk is not None:
+                self.current_chunk_size = final_chunk
+                # self.last_chunk_size = max(self.last_chunk_size, self.current_chunk_size)
+                logging.info(f"Final chunk size: {self.current_chunk_size}")
         else:
             # 检查后台自适应任务是否完成
             background_info = self._consume_background_result_nonblocking()
             if background_info is not None:
-                if hasattr(self.adaptive_chunker, 'needs_interruption') and self.adaptive_chunker.needs_interruption:
+                self.current_chunk_size = background_info.get("current_horizon")
+                if self.adaptive_chunker.needs_interruption:
                     logging.info(f"Interrupting current chunk due to: {background_info.get('factors', 'N/A')}")
-                    should_launch = True
+                    # should_launch = True
                 if self.cfg.enable_gripper_interruption and self.should_interrupt_gripper():
                     should_launch = True
                     gripper_change = True
@@ -608,18 +807,12 @@ class VLASHVectorAsyncManager:
             if self.next_chunk_future is None:
                 # 这个应该只需要current chunk size > overlapped就行 
                 # 重置模型的KV缓存，避免注意力掩码大小不匹配
-                # for layer in self.policy.model.layers:
-                #     layer.self_attn.attn.reset_cache()
                 logging.info(f"Manager: Interrupting current chunk with chunk size: {self.current_chunk_size}")    
                 self.launch_next_inference(raw_obs, task_description)
                 # 还要继续执行吗 执行的话就是index继续增加, 欸但是貌似这个没有起作用吧
                 # 因为后续chunk size可能增加会来了，那还是打断吧
                 
-            # 阻塞等待结果 #这里如果打断了需要同步吗
             self.reset_chunk(gripper_change)
-            # self.current_chunks = self.next_chunk_future.result() #md还是回出错在这里
-            # self.next_chunk_future = None
-            # # self.chunk_index = self.overlap_steps
             self.chunk_index = 0
         
         # 确保不超出当前chunk size
@@ -628,7 +821,15 @@ class VLASHVectorAsyncManager:
         # print("gripper action: ", actions[0, -1])
 
         if self.adaptive_chunker:
-            self.adaptive_chunker.enqueue_history(actions[0].tolist())
+            with self.chunker_lock:
+                self.adaptive_chunker.enqueue_history(actions[0].tolist())
+
+        self._log_step_state(
+            current_step=current_step,
+            should_launch=should_launch,
+            gripper_change=gripper_change,
+            background_info=background_info,
+        )
 
         # logging.info(f"Manager: Current chunk index: {self.chunk_index}")
 
@@ -665,6 +866,7 @@ def eval_single_vec_env(
         task_name=task_name,
         cfg=cfg
     )
+    async_mgr.camera_projection = _extract_camera_projection(vec_env)
 
     total_episodes = cfg.max_episodes
     n_batches = (total_episodes + cfg.eval_batch_size - 1) // cfg.eval_batch_size
@@ -675,6 +877,8 @@ def eval_single_vec_env(
     total_inference_times = 0
     all_launch_intervals = []
     launch_interval_batches = []
+    env_step_times_ms = []
+    control_sleep_times_ms = []
     max_steps = vec_env.call("_max_episode_steps")[0] #这里有max_steps
     monitor = GPUMonitor(gpu_id=0, interval=0.05)
     if cfg.use_monitor:
@@ -702,7 +906,17 @@ def eval_single_vec_env(
             # 4. 根据attention map进一步调整chunk size
             actions = async_mgr.get_action_batch(observation, task_description)
             
+            step_start = time.perf_counter()
             observation, reward, terminated, truncated, info = vec_env.step(actions)
+            env_step_elapsed = time.perf_counter() - step_start
+            env_step_times_ms.append(env_step_elapsed * 1000.0)
+
+            if cfg.target_control_hz is not None:
+                target_period_s = 1.0 / cfg.target_control_hz
+                extra_sleep_s = max(0.0, target_period_s - env_step_elapsed)
+                if extra_sleep_s > 0:
+                    time.sleep(extra_sleep_s)
+                control_sleep_times_ms.append(extra_sleep_s * 1000.0)
             
             # 增加步骤计数
             batch_steps[~dones] += 1
@@ -784,6 +998,15 @@ def eval_single_vec_env(
         "avg_successful_inference_times": (
             float(np.mean(successful_inference_counts)) if successful_inference_counts else None
         ),
+        "env_step_timing": {
+            "count": len(env_step_times_ms),
+            "target_control_hz": cfg.target_control_hz,
+            "avg_env_step_ms": (float(np.mean(env_step_times_ms)) if env_step_times_ms else None),
+            "min_env_step_ms": (float(np.min(env_step_times_ms)) if env_step_times_ms else None),
+            "max_env_step_ms": (float(np.max(env_step_times_ms)) if env_step_times_ms else None),
+            "avg_control_sleep_ms": (float(np.mean(control_sleep_times_ms)) if control_sleep_times_ms else None),
+            "total_control_sleep_ms": float(np.sum(control_sleep_times_ms)) if control_sleep_times_ms else 0.0,
+        },
         "launch_interval_stats": launch_interval_stats,
         "adaptive_chunker_runtime_config": (
             async_mgr.adaptive_chunker.get_runtime_config()
@@ -862,6 +1085,7 @@ def run_benchmark_common(cfg: VLASHEvalConfig):
                 "steps_list": task_info["steps_list"],
                 "successful_steps_list": task_info["successful_steps_list"],
                 "inference_times": task_info["inference_times"],
+                "env_step_timing": task_info["env_step_timing"],
                 "per_episode_inference_counts": task_info["per_episode_inference_counts"],
                 "successful_inference_counts": task_info["successful_inference_counts"],
                 "avg_successful_inference_times": task_info["avg_successful_inference_times"],
@@ -930,46 +1154,21 @@ def run_benchmark_common(cfg: VLASHEvalConfig):
     _write_yaml_file(out_dir / "runtime_config.yaml", runtime_config)
     
     logging.info("="*50)
+    close_envs(all_envs_dict)
+    return {
+        "final_results": final_results,
+        "out_dir": out_dir,
+        "results_per_task": results_per_task,
+        "overall_successes": overall_successes,
+        "all_steps": all_steps,
+        "all_successful_steps": all_successful_steps,
+        "suite_successful_inference_counts": dict(suite_successful_inference_counts),
+    }
 
 
 @parser.wrap()
 def run_benchmark(cfg: VLASHEvalConfig):
     run_benchmark_common(cfg)
-    logging.info(f"FINAL OVERALL SR: {final_results['overall']['avg_success_rate']*100:.2f}%")
-    logging.info(f"Results saved to {out_dir}")
-    logging.info(f"Runtime config saved to {out_dir / 'runtime_config.yaml'}")
-    logging.info("="*50)
-
-    close_envs(all_envs_dict)
-    
-    num_tasks = len(results_per_task)
-    # 每个任务测多少
-    ep_per_task = cfg.max_episodes
-    # 总测试数
-    total_test_count = len(overall_successes)
-
-    logging.info("="*50)
-    logging.info(f"评估统计报告:")
-    logging.info(f" - 环境集合 (Suite): {cfg.env_task}")
-    logging.info(f" - 任务总数 (Num Tasks): {num_tasks}")
-    logging.info(f" - 每任务测试数 (Episodes per Task): {ep_per_task}")
-    logging.info(f" - 总测试规模 (Total Episodes): {total_test_count}")
-    logging.info(f" - 最终总成功率 (Overall SR): {np.mean(overall_successes)*100:.2f}%")
-    logging.info(f" - 平均每episode步骤数 (Avg Steps per Episode): {np.mean(all_steps):.2f}")
-    logging.info(
-        f" - 成功episode平均步骤数 (Avg Steps per Successful Episode): "
-        f"{(float(np.mean(all_successful_steps)) if all_successful_steps else float('nan')):.2f}"
-    )
-    logging.info(f" - 总步骤数 (Total Steps): {sum(all_steps)}")
-    logging.info(f" - 自适应chunk size: {'启用' if cfg.use_adaptive_chunk else '禁用'}")
-    if cfg.use_adaptive_chunk:
-        logging.info(f" - Chunk size范围: {cfg.adaptive_min_horizon} - {cfg.adaptive_max_horizon}")
-    for suite_name, counts in suite_successful_inference_counts.items():
-        logging.info(
-            f" - Suite {suite_name} 成功episode平均推理次数 (Avg Inference Count on Success): "
-            f"{(float(np.mean(counts)) if counts else float('nan')):.2f}"
-        )
-    logging.info("="*50)
     
     # entropy_dict = policy.get_attention_entropies()
     # # 保存

@@ -168,7 +168,7 @@ class AdaptiveActionChunker:
         self.model = load_model(self.config_path, self.checkpoint_path, device=self.device)
         self.cached_boxes = None
         self.query_box_times = 0
-
+        
     def get_runtime_config(self):
         return {
             "policy_type": "finegrained_base",
@@ -368,7 +368,6 @@ class AdaptiveActionChunker:
         if history_action is not None:
             self.action_history.append(history_action)
     
-    
     def compute_continuity(self):
         continuity_info = self.compute_continuity_info()
         return continuity_info["label"]
@@ -426,14 +425,14 @@ class AdaptiveActionChunker:
 
             continuity_info["level"] = level
             continuity_info["label"] = label
-            logging.info(
-                "continuity: %.4f, level: %s, gripper_changed: %s, prev_continuity: %s, delta: %s",
-                continuity,
-                level,
-                gripper_changed,
-                prev_cont,
-                delta,
-            )
+            # logging.info(
+            #     "continuity: %.4f, level: %s, gripper_changed: %s, prev_continuity: %s, delta: %s",
+            #     continuity,
+            #     level,
+            #     gripper_changed,
+            #     prev_cont,
+            #     delta,
+            # )
             self.prev_continuity = continuity
         else:
             gripper_changed = False
@@ -589,7 +588,7 @@ class AdaptiveActionChunker:
         else:
             confidence = 2
 
-        
+        # 现在的策略基本是被attention控制的
         logging.info(
             "confidence: %s, continuity_factor: %s, continuity_level: %s",
             confidence,
@@ -691,7 +690,7 @@ class AdaptiveActionChunker:
         continuity_info = self.compute_continuity_info()
         continuity_factor = continuity_info["label"]
         continuity_level = continuity_info["level"]
-
+        
         if continuity_level == "very_high":
             self.current_horizon = min(self.max_h, prev_h + 5)
         elif continuity_level == "high":
