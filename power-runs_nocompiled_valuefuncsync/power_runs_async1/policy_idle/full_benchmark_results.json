@@ -1,0 +1,32 @@
+{
+  "mode": "policy_idle",
+  "result": {
+    "load_policy": true,
+    "load_dino": false,
+    "idle_duration_s": 30.0,
+    "idle_warmup_s": 2.0,
+    "torch_cuda_available": true,
+    "measured_elapsed_s": 30.001360416412354,
+    "policy_path": "/pub/data/wangzb/pi05_libero_finetuned",
+    "dino_runtime": null,
+    "monitor": {
+      "gpu_name": "NVIDIA L40",
+      "avg_power_w": 80.72,
+      "max_power_w": 81.2,
+      "total_energy_j": 2405.31,
+      "total_time_s": 29.8,
+      "samples_count": 2980
+    },
+    "runtime_config": {
+      "mode": "policy_idle",
+      "monitor_gpu_id": 0,
+      "monitor_interval": 0.01,
+      "idle_duration_s": 30.0,
+      "idle_warmup_s": 2.0,
+      "load_policy": true,
+      "load_dino": false,
+      "policy_path": "/pub/data/wangzb/pi05_libero_finetuned",
+      "dino_runtime": null
+    }
+  }
+}

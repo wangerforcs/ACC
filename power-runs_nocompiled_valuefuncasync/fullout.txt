@@ -1,0 +1,184 @@
+adaptive,dino1,fixed20,fixed10,fixed5
+sync
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 117.75,
+  "max_power_w": 173.92,
+  "total_energy_j": 642.9,
+  "total_time_s": 5.46,
+  "samples_count": 546
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 115.86,
+  "max_power_w": 187.01,
+  "total_energy_j": 610.6,
+  "total_time_s": 5.27,
+  "samples_count": 527
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 94.28,
+  "max_power_w": 111.21,
+  "total_energy_j": 539.27,
+  "total_time_s": 5.72,
+  "samples_count": 572
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 110.95,
+  "max_power_w": 153.08,
+  "total_energy_j": 743.39,
+  "total_time_s": 6.7,
+  "samples_count": 670
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 123.92,
+  "max_power_w": 153.96,
+  "total_energy_j": 1080.6,
+  "total_time_s": 8.72,
+  "samples_count": 872
+},
+
+async1
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 115.78,
+  "max_power_w": 182.54,
+  "total_energy_j": 603.2,
+  "total_time_s": 5.21,
+  "samples_count": 521
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 102.7,
+  "max_power_w": 144.05,
+  "total_energy_j": 524.77,
+  "total_time_s": 5.11,
+  "samples_count": 511
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 96.03,
+  "max_power_w": 124.26,
+  "total_energy_j": 528.17,
+  "total_time_s": 5.5,
+  "samples_count": 550
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 112.1,
+  "max_power_w": 141.08,
+  "total_energy_j": 727.5,
+  "total_time_s": 6.49,
+  "samples_count": 649
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 132.43,
+  "max_power_w": 154.73,
+  "total_energy_j": 1128.32,
+  "total_time_s": 8.52,
+  "samples_count": 852
+},
+
+async2
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 125.76,
+  "max_power_w": 159.31,
+  "total_energy_j": 636.34,
+  "total_time_s": 5.06,
+  "samples_count": 506
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 119.37,
+  "max_power_w": 174.66,
+  "total_energy_j": 595.67,
+  "total_time_s": 4.99,
+  "samples_count": 499
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 94.76,
+  "max_power_w": 116.47,
+  "total_energy_j": 502.2,
+  "total_time_s": 5.3,
+  "samples_count": 530
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 116.88,
+  "max_power_w": 137.04,
+  "total_energy_j": 724.63,
+  "total_time_s": 6.2,
+  "samples_count": 620
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 133.99,
+  "max_power_w": 168.16,
+  "total_energy_j": 1140.29,
+  "total_time_s": 8.51,
+  "samples_count": 851
+},
+
+async3
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 139.37,
+  "max_power_w": 206.97,
+  "total_energy_j": 709.38,
+  "total_time_s": 5.09,
+  "samples_count": 509
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 133.5,
+  "max_power_w": 221.41,
+  "total_energy_j": 667.52,
+  "total_time_s": 5.0,
+  "samples_count": 500
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 99.26,
+  "max_power_w": 117.57,
+  "total_energy_j": 507.24,
+  "total_time_s": 5.11,
+  "samples_count": 511
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 127.89,
+  "max_power_w": 176.97,
+  "total_energy_j": 762.25,
+  "total_time_s": 5.96,
+  "samples_count": 596
+},
+
+"monitor": {
+  "gpu_name": "NVIDIA L40",
+  "avg_power_w": 139.52,
+  "max_power_w": 162.75,
+  "total_energy_j": 1205.42,
+  "total_time_s": 8.64,
+  "samples_count": 864
+},

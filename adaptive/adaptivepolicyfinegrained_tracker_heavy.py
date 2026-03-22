@@ -26,28 +26,42 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
         )
         return config
 
-    def ValueFunc(self, image, instruction, vla_attention_map, use_uncertainty=True, use_coverage=True):
+    def propose_value_horizon(
+        self,
+        image,
+        instruction,
+        vla_attention_map,
+        use_uncertainty=True,
+        use_coverage=True,
+        *,
+        parsed_objs=None,
+        boxes_xyxy=None,
+        phrases=None,
+        continuity_info=None,
+        current_horizon=None,
+        box_source=None,
+    ):
         """
         Heavy version:
         - 默认更倾向大 chunk
         - 仅在连续性和 attention 指标同时明显恶化时才显著降档
         """
-        if isinstance(vla_attention_map, list) and len(vla_attention_map) > 0:
-            if all(isinstance(layer, list) for layer in vla_attention_map) and all(
-                isinstance(item, torch.Tensor) for layer in vla_attention_map for item in layer
-            ):
-                vla_attention_map = torch.stack([torch.stack(layer) for layer in vla_attention_map])
-            elif all(isinstance(item, torch.Tensor) for item in vla_attention_map):
-                vla_attention_map = torch.stack(vla_attention_map)
-
-        self.needs_interruption = False
-
-        parsed_objs = extract_objects(instruction)
+        vla_attention_map = self._normalize_attention_map(vla_attention_map)
+        parsed_objs = extract_objects(instruction) if parsed_objs is None else parsed_objs
         if not parsed_objs:
-            return self.min_h, {"reason": "parse_fail"}
+            return {
+                "current_horizon": self.min_h,
+                "needs_interruption": False,
+                "info": {"reason": "parse_fail"},
+            }
 
-        _, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
+        if boxes_xyxy is None or phrases is None:
+            _, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
         boxes = boxes_xyxy
+        if boxes is None:
+            boxes = torch.tensor([])
+        elif not isinstance(boxes, torch.Tensor):
+            boxes = torch.as_tensor(boxes, dtype=torch.float32)
         if len(boxes) > 0:
             boxes = torch.clamp(boxes, 0.0, 1.0)
 
@@ -55,7 +69,7 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
             "target_object": parsed_objs,
             "dino_boxes": boxes.tolist() if isinstance(boxes, torch.Tensor) else [],
             "phrases": phrases,
-            "box_source": "dino" if self.last_query_used_dino else "tracker",
+            "box_source": box_source if box_source is not None else ("dino" if self.last_query_used_dino else "tracker"),
         }
 
         kl_scores = []
@@ -67,7 +81,7 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
         peak_thresh_high = 0.8
         peak_thresh_low = 0.4
 
-        continuity_info = self.compute_continuity_info()
+        continuity_info = self.compute_continuity_info() if continuity_info is None else continuity_info
         continuity_factor = continuity_info["label"]
 
         for layer_idx in range(vla_attention_map.shape[0]):
@@ -178,14 +192,29 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
             best_kl,
         )
 
-        self.current_horizon = max(self.min_h, self.get_chunk_size(confidence))
-        return self.current_horizon, info_dict
+        return {
+            "current_horizon": max(self.min_h, self.get_chunk_size(confidence)),
+            "needs_interruption": False,
+            "info": info_dict,
+        }
 
-    def adaptive_chunk_heuristic(self, image, instruction, robot_state=None, object_state=None):
+    def propose_adaptive_chunk_heuristic(
+        self,
+        image,
+        instruction,
+        robot_state=None,
+        object_state=None,
+        *,
+        current_horizon=None,
+    ):
         parsed_objs = extract_objects(instruction)
 
         if not parsed_objs:
-            return self.min_h, {"reason": "parse_fail"}
+            return {
+                "current_horizon": self.min_h,
+                "needs_interruption": False,
+                "info": {"reason": "parse_fail"},
+            }
 
         boxes_cxcywh, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
         boxes = boxes_cxcywh
@@ -219,24 +248,30 @@ class AdaptiveActionChunker(TrackerAdaptiveActionChunker):
             if min_distance < 0.1:
                 factors.append("Close to object (grasping phase)")
 
-        self.needs_interruption = False
-        prev_h = self.current_horizon
+        prev_h = self.current_horizon if current_horizon is None else current_horizon
         continuity_info = self.compute_continuity_info()
         continuity_factor = continuity_info["label"]
         continuity_level = continuity_info["level"]
         if continuity_level == "very_high":
-            self.current_horizon = min(self.max_h, prev_h + 5)
+            proposed_horizon = min(self.max_h, prev_h + 5)
         elif continuity_level == "high":
-            self.current_horizon = min(self.max_h, prev_h + 3)
+            proposed_horizon = min(self.max_h, prev_h + 3)
         elif continuity_level == "medium":
-            self.current_horizon = prev_h
+            proposed_horizon = prev_h
         elif continuity_level == "low":
-            self.current_horizon = max(self.min_h, min(prev_h - 2, self.get_chunk_size(3)))
+            proposed_horizon = max(self.min_h, min(prev_h - 2, self.get_chunk_size(3)))
         elif continuity_level == "very_low":
             # Heavy variant still stays above the most conservative chunk by default.
-            self.current_horizon = max(self.min_h, self.get_chunk_size(2))
+            proposed_horizon = max(self.min_h, self.get_chunk_size(2))
+        else:
+            proposed_horizon = prev_h
 
         factors.append(continuity_factor)
         info_dict["continuity_level"] = continuity_level
+        info_dict["continuity_info"] = dict(continuity_info)
         info_dict["factors"] = factors
-        return self.current_horizon, info_dict
+        return {
+            "current_horizon": proposed_horizon,
+            "needs_interruption": False,
+            "info": info_dict,
+        }

@@ -1,0 +1,6 @@
+mode: idle
+monitor_gpu_id: 0
+monitor_interval: 0.01
+idle_duration_s: 30.0
+idle_warmup_s: 2.0
+idle_create_cuda_context: true

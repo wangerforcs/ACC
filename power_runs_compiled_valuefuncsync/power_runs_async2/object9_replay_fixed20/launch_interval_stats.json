@@ -1,0 +1,21 @@
+{
+  "libero_object_9": {
+    "count": 6,
+    "distribution": {
+      "18": 6
+    },
+    "mean": 18.0,
+    "min": 18,
+    "max": 18,
+    "intervals_by_batch": [
+      [
+        18,
+        18,
+        18,
+        18,
+        18,
+        18
+      ]
+    ]
+  }
+}

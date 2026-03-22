@@ -1,0 +1,26 @@
+{
+  "mode": "idle",
+  "result": {
+    "idle_duration_s": 30.0,
+    "idle_warmup_s": 2.0,
+    "idle_create_cuda_context": false,
+    "torch_cuda_available": true,
+    "measured_elapsed_s": 30.004305601119995,
+    "monitor": {
+      "gpu_name": "NVIDIA L40",
+      "avg_power_w": 29.63,
+      "max_power_w": 30.43,
+      "total_energy_j": 883.3,
+      "total_time_s": 29.81,
+      "samples_count": 2981
+    },
+    "runtime_config": {
+      "mode": "idle",
+      "monitor_gpu_id": 0,
+      "monitor_interval": 0.01,
+      "idle_duration_s": 30.0,
+      "idle_warmup_s": 2.0,
+      "idle_create_cuda_context": false
+    }
+  }
+}

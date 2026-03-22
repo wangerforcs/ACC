@@ -27,6 +27,7 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         dino_refresh_interval: int = 20,
         dino_accept_iou: float = 0.1,
         dino_accept_center_dist: float = 0.15,
+        enable_object_motion_penalty: bool = False,
         object_motion_threshold: float = 0.01,
         object_motion_lookback: int = 3,
         object_motion_exit_threshold: float = 0.006,
@@ -44,6 +45,7 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.dino_refresh_interval = max(1, int(dino_refresh_interval))
         self.dino_accept_iou = float(dino_accept_iou)
         self.dino_accept_center_dist = float(dino_accept_center_dist)
+        self.enable_object_motion_penalty = bool(enable_object_motion_penalty)
         self.object_motion_threshold = float(object_motion_threshold)
         self.object_motion_lookback = max(1, int(object_motion_lookback))
         self.object_motion_exit_threshold = float(object_motion_exit_threshold)
@@ -91,6 +93,7 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
                 "dino_refresh_interval": self.dino_refresh_interval,
                 "dino_accept_iou": self.dino_accept_iou,
                 "dino_accept_center_dist": self.dino_accept_center_dist,
+                "enable_object_motion_penalty": self.enable_object_motion_penalty,
                 "object_motion_threshold": self.object_motion_threshold,
                 "object_motion_lookback": self.object_motion_lookback,
                 "object_motion_exit_threshold": self.object_motion_exit_threshold,
@@ -614,10 +617,25 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         self.last_query_used_dino = False
         return tracked
 
-    def adaptive_chunk_heuristic(self, image, instruction, robot_state=None, object_state=None):
-        horizon, info_dict = super().adaptive_chunk_heuristic(
-            image, instruction, robot_state=robot_state, object_state=object_state
+    def propose_adaptive_chunk_heuristic(
+        self,
+        image,
+        instruction,
+        robot_state=None,
+        object_state=None,
+        *,
+        current_horizon=None,
+    ):
+        proposal = super().propose_adaptive_chunk_heuristic(
+            image,
+            instruction,
+            robot_state=robot_state,
+            object_state=object_state,
+            current_horizon=current_horizon,
         )
+        info_dict = dict(proposal.get("info") or {})
+        proposed_horizon = int(proposal.get("current_horizon", self.current_horizon))
+        needs_interruption = bool(proposal.get("needs_interruption", False))
 
         max_motion, moving_phrases, movement_by_phrase, _ = self._compute_object_motion(info_dict)
         gripper_value = robot_state.get("gripper_state") if robot_state else None
@@ -677,9 +695,9 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
         info_dict["motion_penalty_phrases"] = penalty_phrases
         info_dict["motion_penalty_max"] = penalty_motion
         
-        if penalty_phrases:
-            self.current_horizon = min(self.current_horizon, self.get_chunk_size(0))
-            self.needs_interruption = True
+        if self.enable_object_motion_penalty and penalty_phrases:
+            proposed_horizon = min(proposed_horizon, self.get_chunk_size(0))
+            needs_interruption = True
             info_dict.setdefault("factors", []).append(
                 f"Object moving without grasp ({','.join(penalty_phrases)})"
             )
@@ -690,12 +708,17 @@ class AdaptiveActionChunker(BaseAdaptiveActionChunker):
             )
 
         logger.info(
-            "phrase_states: %s, gripper_value=%s, gripper_closed=%s, recent_gripper_close=%s, grasped_estimate=%s",
+            "phrase_states: %s, gripper_value=%s, gripper_closed=%s, recent_gripper_close=%s, grasped_estimate=%s, motion_penalty_enabled=%s",
             phrase_states,
             gripper_value,
             gripper_closed,
             recent_gripper_close,
             grasped_estimate,
+            self.enable_object_motion_penalty,
         )
-        logger.info(f"current_horizon in heuristic: {self.current_horizon}")
-        return self.current_horizon, info_dict
+        logger.info(f"current_horizon in heuristic: {proposed_horizon}")
+        return {
+            "current_horizon": proposed_horizon,
+            "needs_interruption": needs_interruption,
+            "info": info_dict,
+        }

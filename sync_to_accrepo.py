@@ -43,12 +43,20 @@ DEFAULT_TOP_LEVEL_FILES = [
     "run_inference.py",
     "sync_to_accrepo.py",
     "LIBERO/modified_libero_files.txt",
+    "measure_cuda_context_power.py",
+    "measure_vla_latency.py",
+    "plot_fullout_power.py",
+    "export_fullout.py",
 ]
 
 # 新增：需要整体复制的额外文件夹列表
 DEFAULT_EXTRA_FOLDERS = [
     "computeflops",
     "trackersscoregood",
+    "power_runs_compiled_valuefuncasync",
+    "power_runs_compiled_valuefuncsync",
+    "power-runs_nocompiled_valuefuncasync",
+    "power-runs_nocompiled_valuefuncsync",
     # 例子：
     # "configs",
     # "tools",

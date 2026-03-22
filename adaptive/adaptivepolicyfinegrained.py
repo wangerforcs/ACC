@@ -160,7 +160,8 @@ class AdaptiveActionChunker:
         
         # Grounding DINO model initialization
         self.config_path = '/pub/data/wangzb/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py'
-        self.checkpoint_path = '/pub/data/wangzb/GroundingDINO/weights/20260314_pool_8~2_best.pth'
+        # self.checkpoint_path = '/pub/data/wangzb/GroundingDINO/weights/20260314_pool_8~2_best.pth'
+        self.checkpoint_path = '/pub/data/wangzb/GroundingDINO/weights/20260318_train2-3_best.pth'
         # self.checkpoint_path = '/pub/data/wangzb/GroundingDINO/weights/groundingdino_swinb_cogcoor.pth'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
@@ -168,6 +169,14 @@ class AdaptiveActionChunker:
         self.model = load_model(self.config_path, self.checkpoint_path, device=self.device)
         self.cached_boxes = None
         self.query_box_times = 0
+
+    def apply_chunk_proposal(self, proposal: Optional[Dict[str, object]]) -> Tuple[int, Dict[str, object]]:
+        if not proposal:
+            return self.current_horizon, {}
+        horizon = int(proposal.get("current_horizon", self.current_horizon))
+        self.current_horizon = horizon
+        self.needs_interruption = bool(proposal.get("needs_interruption", False))
+        return self.current_horizon, dict(proposal.get("info") or {})
         
     def get_runtime_config(self):
         return {
@@ -453,8 +462,32 @@ class AdaptiveActionChunker:
     def set_interruption(self):
         self.needs_interruption = True
         self.action_history = []
-    
-    def ValueFunc(self, image, instruction, vla_attention_map, use_uncertainty=True, use_coverage=True):
+
+    def _normalize_attention_map(self, vla_attention_map):
+        if isinstance(vla_attention_map, list) and len(vla_attention_map) > 0:
+            if all(isinstance(layer, list) for layer in vla_attention_map) and all(
+                isinstance(item, torch.Tensor) for layer in vla_attention_map for item in layer
+            ):
+                return torch.stack([torch.stack(layer) for layer in vla_attention_map])
+            if all(isinstance(item, torch.Tensor) for item in vla_attention_map):
+                return torch.stack(vla_attention_map)
+        return vla_attention_map
+
+    def propose_value_horizon(
+        self,
+        image,
+        instruction,
+        vla_attention_map,
+        use_uncertainty=True,
+        use_coverage=True,
+        *,
+        parsed_objs=None,
+        boxes_xyxy=None,
+        phrases=None,
+        continuity_info=None,
+        current_horizon=None,
+        box_source=None,
+    ):
         """
         核心函数：根据图像、指令和 VLA 内部状态计算当前的"策略价值"
         并返回推荐的 horizon。
@@ -469,32 +502,37 @@ class AdaptiveActionChunker:
                 horizon: 推荐的 horizon 值
                 info_dict: 包含计算信息的字典
         """
-        # 处理vla_attention_map是list of list of tensors的情况
-        if isinstance(vla_attention_map, list) and len(vla_attention_map) > 0:
-            # 检查是否是list of list of tensors
-            if all(isinstance(layer, list) for layer in vla_attention_map) and all(isinstance(item, torch.Tensor) for layer in vla_attention_map for item in layer):
-                # 转换为 [num_layer, num_heads, seq_len] 的张量
-                vla_attention_map = torch.stack([torch.stack(layer) for layer in vla_attention_map])
-            elif all(isinstance(item, torch.Tensor) for item in vla_attention_map):
-                # 兼容旧格式：list of tensors
-                vla_attention_map = torch.stack(vla_attention_map)
+        vla_attention_map = self._normalize_attention_map(vla_attention_map)
 
-        self.needs_interruption = False        
-        
+        if current_horizon is None:
+            current_horizon = self.current_horizon
+
+        local_needs_interruption = False
+
         # 1. 解析指令，获取 DINO 的 Prompt
-        parsed_objs = extract_objects(instruction)
+        if parsed_objs is None:
+            parsed_objs = extract_objects(instruction)
         if not parsed_objs:
             # 如果解析失败，保守策略
-            return self.min_h, {"reason": "parse_fail"}
+            return {
+                "current_horizon": self.min_h,
+                "needs_interruption": False,
+                "info": {"reason": "parse_fail"},
+            }
 
         # 2. 获取 Ground Truth (DINO)
-        _, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)  
+        if boxes_xyxy is None or phrases is None:
+            _, boxes_xyxy, _, phrases, _ = self.get_dino_boxes(image, parsed_objs)
               
         # if len(phrases) != len(parsed_objs): #感觉不能这样判断
         #     logging.warning(f"DINO 识别的短语数量与解析的对象数量不匹配！parsed_objs: {parsed_objs}, phrases: {phrases}")
         #     return self.current_horizon, {"reason": "dino_parse_mismatch", "parsed_objs": parsed_objs, "dino_phrases": phrases}
         
         boxes = boxes_xyxy
+        if boxes is None:
+            boxes = torch.tensor([])
+        elif not isinstance(boxes, torch.Tensor):
+            boxes = torch.as_tensor(boxes, dtype=torch.float32)
         if len(boxes) > 0:
             boxes = torch.clamp(boxes, 0.0, 1.0)
         
@@ -505,6 +543,10 @@ class AdaptiveActionChunker:
             "target_object": parsed_objs,
             "dino_boxes": boxes.tolist()
         }
+        if phrases:
+            info_dict["phrases"] = phrases
+        if box_source is not None:
+            info_dict["box_source"] = box_source
         
         confidence = 1.0
         reasons = []
@@ -518,14 +560,15 @@ class AdaptiveActionChunker:
         peak_thresh_high = 0.8
         peak_thresh_low = 0.3
         
-        continuity_info = self.compute_continuity_info()
+        if continuity_info is None:
+            continuity_info = self.compute_continuity_info()
         continuity_factor = continuity_info["label"]
         
         # 遍历每一层
         for layer_idx in range(vla_attention_map.shape[0]):
             layer_attn = vla_attention_map[layer_idx]
             metrics = self.uncertainty_engine.compute_uncertainty(layer_attn, boxes)
-            logging.info(f"layer_idx: {layer_idx}, metrics: {metrics}")
+            # logging.info(f"layer_idx: {layer_idx}, metrics: {metrics}")
             kl_scores.append(metrics['kl'])
             overlaps.append(metrics.get("coverage", 0.0))
             peak_scores.append(metrics['peak_ratio'])
@@ -574,7 +617,7 @@ class AdaptiveActionChunker:
         #     confidence = 2
         if is_low_cont and (peak_low_ratio >= 0.75 or avg_coverage < 0.05):
             confidence = 0
-            # self.needs_interruption = True
+            # local_needs_interruption = True
         elif is_low_cont or peak_low_ratio >= 0.5 or avg_coverage < 0.08:
             confidence = 1
         elif peak_high_ratio >= 0.5 and avg_coverage >= 0.20 and is_high_cont:
@@ -589,23 +632,43 @@ class AdaptiveActionChunker:
             confidence = 2
 
         # 现在的策略基本是被attention控制的
-        logging.info(
-            "confidence: %s, continuity_factor: %s, continuity_level: %s",
-            confidence,
-            continuity_factor,
-            continuity_level,
-        )
+        # logging.info(
+        #     "confidence: %s, continuity_factor: %s, continuity_level: %s",
+        #     confidence,
+        #     continuity_factor,
+        #     continuity_level,
+        # )
                 
-        prev_h = self.current_horizon        
-        self.current_horizon = max(self.min_h, self.get_chunk_size(confidence))
-        
-        return self.current_horizon, info_dict
+        proposed_horizon = max(self.min_h, self.get_chunk_size(confidence))
+        return {
+            "current_horizon": proposed_horizon,
+            "needs_interruption": local_needs_interruption,
+            "info": info_dict,
+        }
+
+    def ValueFunc(self, image, instruction, vla_attention_map, use_uncertainty=True, use_coverage=True):
+        proposal = self.propose_value_horizon(
+            image,
+            instruction,
+            vla_attention_map,
+            use_uncertainty=use_uncertainty,
+            use_coverage=use_coverage,
+        )
+        return self.apply_chunk_proposal(proposal)
     
     def get_chunk_size(self, confidence): # 0, 1, 2, 3, 4, 5
         return int(self.min_h + (self.max_h - self.min_h) / self.chunk_levels * confidence)
 
 
-    def adaptive_chunk_heuristic(self, image, instruction, robot_state=None, object_state=None):
+    def propose_adaptive_chunk_heuristic(
+        self,
+        image,
+        instruction,
+        robot_state=None,
+        object_state=None,
+        *,
+        current_horizon=None,
+    ):
         """
         基于启发式逻辑的自适应chunk size调整函数
         不依赖VLA attention map，可在后台持续运行
@@ -685,31 +748,46 @@ class AdaptiveActionChunker:
         #     reason = "; ".join(factors)
         # 5. 基于启发式因子调整horizon
         
-        self.needs_interruption = False
-        prev_h = self.current_horizon        
+        local_needs_interruption = False
+        prev_h = self.current_horizon if current_horizon is None else current_horizon
         continuity_info = self.compute_continuity_info()
         continuity_factor = continuity_info["label"]
         continuity_level = continuity_info["level"]
         
         if continuity_level == "very_high":
-            self.current_horizon = min(self.max_h, prev_h + 5)
+            proposed_horizon = min(self.max_h, prev_h + 5)
         elif continuity_level == "high":
-            self.current_horizon = min(self.max_h, prev_h + 3)
+            proposed_horizon = min(self.max_h, prev_h + 3)
         elif continuity_level == "medium":
-            self.current_horizon = prev_h
+            proposed_horizon = prev_h
         elif continuity_level == "low":
-            self.current_horizon = max(self.min_h, min(prev_h - 3, self.get_chunk_size(2)))
+            proposed_horizon = max(self.min_h, min(prev_h - 3, self.get_chunk_size(2)))
         elif continuity_level == "very_low":
-            self.set_interruption()
+            local_needs_interruption = True
             logging.info("continuity very low -> reduce to cautious chunk")
-            self.current_horizon = max(self.min_h, self.get_chunk_size(1))
+            proposed_horizon = max(self.min_h, self.get_chunk_size(1))
+        else:
+            proposed_horizon = prev_h
 
         factors.append(continuity_factor)
         info_dict["continuity_level"] = continuity_level
         info_dict["continuity_score"] = continuity_info["score"]
+        info_dict["continuity_info"] = dict(continuity_info)
         info_dict["factors"] = factors
-        
-        return self.current_horizon, info_dict
+        return {
+            "current_horizon": proposed_horizon,
+            "needs_interruption": local_needs_interruption,
+            "info": info_dict,
+        }
+
+    def adaptive_chunk_heuristic(self, image, instruction, robot_state=None, object_state=None):
+        proposal = self.propose_adaptive_chunk_heuristic(
+            image,
+            instruction,
+            robot_state=robot_state,
+            object_state=object_state,
+        )
+        return self.apply_chunk_proposal(proposal)
 
 # ==============================================================================
 # 4. Simulation / Test Run

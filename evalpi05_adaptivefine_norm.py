@@ -5,7 +5,6 @@
 """
 
 import concurrent.futures
-import threading
 import json
 import logging
 import time
@@ -135,6 +134,7 @@ class VLASHEvalConfig:
     adaptive_uncertainty_threshold: float = 0.015
     adaptive_coverage_threshold: float = 0.1
     adaptive_continuity_threshold: float = 0.2
+    dino_refresh_interval: int = 20
     
     # 视频保存配置
     save_video: bool = False
@@ -146,6 +146,7 @@ class VLASHEvalConfig:
     tracker_log_level: str = "INFO"
     scoregate_log_level: str = "WARNING"
     enable_gripper_interruption: bool = False
+    enable_object_motion_penalty: bool = False
     adaptive_chunker_cls_path: str = ( #默认是finegrained_tracker_scoregate
         "adaptive.adaptivepolicyfinegrained_tracker_scoregate:AdaptiveActionChunker"
     )
@@ -222,6 +223,7 @@ def _collect_eval_runtime_config(cfg: VLASHEvalConfig, adaptive_chunker):
         "env_task": cfg.env_task,
         "use_adaptive_chunk": cfg.use_adaptive_chunk,
         "enable_gripper_interruption": cfg.enable_gripper_interruption,
+        "enable_object_motion_penalty": cfg.enable_object_motion_penalty,
         "adaptive_min_horizon": cfg.adaptive_min_horizon,
         "adaptive_max_horizon": cfg.adaptive_max_horizon,
         "adaptive_uncertainty_threshold": cfg.adaptive_uncertainty_threshold,
@@ -273,6 +275,7 @@ def _log_effective_eval_setup(cfg: VLASHEvalConfig):
     logging.info(f"Seed: {cfg.seed}")
     logging.info(f"Use adaptive chunk: {cfg.use_adaptive_chunk}")
     logging.info(f"Enable gripper interruption: {cfg.enable_gripper_interruption}")
+    logging.info(f"Enable object motion penalty: {cfg.enable_object_motion_penalty}")
     logging.info(f"Inference overlap steps: {cfg.inference_overlap_steps}")
     logging.info(f"Target control hz: {cfg.target_control_hz}")
     logging.info(f"Action quant ratio: {cfg.action_quant_ratio}")
@@ -327,23 +330,29 @@ class VLASHVectorAsyncManager:
                 uncertainty_threshold=cfg.adaptive_uncertainty_threshold,
                 coverage_threshold=cfg.adaptive_coverage_threshold,
                 continuity_threshold=env_continuity_threshold,
+                enable_object_motion_penalty=cfg.enable_object_motion_penalty,
+                dino_refresh_interval=cfg.dino_refresh_interval,
             )
             # 初始chunk size
             self.current_chunk_size = self.adaptive_chunker.current_horizon
         else:
             self.adaptive_chunker = None
             self.current_chunk_size = self.n_action_steps
+        self.active_chunk_size = self.current_chunk_size
         self.valid_chunk_size = self.current_chunk_size
         self.last_chunk_size = self.current_chunk_size
         
         # 推理和 background 分开，background 串行排队，保证“每步都提交”同时不并发写 chunker
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.value_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.next_chunk_future = None
         self.background_futures = []
+        self.value_futures = []
         self.background_task_counter = 0
         self.latest_consumed_background_task_id = -1
-        self.chunker_lock = threading.Lock()
+        self.value_task_counter = 0
+        self.latest_consumed_value_task_id = -1
         
         # 状态追踪
         self.current_chunks = None  # 形状: [Batch, Horizon, ActionDim]
@@ -372,6 +381,10 @@ class VLASHVectorAsyncManager:
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
         self.camera_projection = None
         self.latest_background_info = None
+        self.predict_action_time_ms = []
+        self.attn_maps_time_ms = []
+        self.value_func_time_ms = []
+        self.background_heuristic_time_ms = []
 
     def reset_state(self):
         """每个 Batch 开始前调用"""
@@ -379,10 +392,15 @@ class VLASHVectorAsyncManager:
             self.next_chunk_future.cancel()
         for _, future in self.background_futures:
             future.cancel()
+        for _, future in self.value_futures:
+            future.cancel()
         self.next_chunk_future = None
         self.background_futures = []
+        self.value_futures = []
         self.background_task_counter = 0
         self.latest_consumed_background_task_id = -1
+        self.value_task_counter = 0
+        self.latest_consumed_value_task_id = -1
         self.current_chunks = None
         self.chunk_index = 0
         # 重置视频帧列表
@@ -390,11 +408,13 @@ class VLASHVectorAsyncManager:
         # 添加与 rollout.py 一致的 policy.reset() 调用
         self.policy.reset()
         if self.adaptive_chunker:
-            with self.chunker_lock:
-                self.adaptive_chunker.reset()
-                self.current_chunk_size = self.adaptive_chunker.current_horizon
+            self.adaptive_chunker.reset()
+            self.current_chunk_size = self.adaptive_chunker.current_horizon
         else:
             self.current_chunk_size = self.n_action_steps
+        self.active_chunk_size = self.current_chunk_size
+        self.valid_chunk_size = self.current_chunk_size
+        self.last_chunk_size = self.current_chunk_size
         self.inference_times = 0
         self.batch_env_step = 0
         self.last_launch_step = None
@@ -402,6 +422,10 @@ class VLASHVectorAsyncManager:
         self.active_env_mask = np.ones(self.num_envs, dtype=bool)
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
         self.latest_background_info = None
+        self.predict_action_time_ms = []
+        self.attn_maps_time_ms = []
+        self.value_func_time_ms = []
+        self.background_heuristic_time_ms = []
 
     def set_active_env_mask(self, active_mask):
         active_mask = np.asarray(active_mask, dtype=bool)
@@ -433,6 +457,32 @@ class VLASHVectorAsyncManager:
             "mean": float(np.mean(self.launch_step_intervals)),
             "min": int(min(self.launch_step_intervals)),
             "max": int(max(self.launch_step_intervals)),
+        }
+
+    def get_latency_breakdown_stats(self):
+        def _stats(values):
+            if not values:
+                return {
+                    "count": 0,
+                    "mean_ms": 0.0,
+                    "min_ms": None,
+                    "max_ms": None,
+                    "total_ms": 0.0,
+                }
+            arr = np.asarray(values, dtype=np.float64)
+            return {
+                "count": int(arr.size),
+                "mean_ms": float(arr.mean()),
+                "min_ms": float(arr.min()),
+                "max_ms": float(arr.max()),
+                "total_ms": float(arr.sum()),
+            }
+
+        return {
+            "predict_action": _stats(self.predict_action_time_ms),
+            "get_attn_maps": _stats(self.attn_maps_time_ms),
+            "value_func": _stats(self.value_func_time_ms),
+            "background_heuristic": _stats(self.background_heuristic_time_ms),
         }
 
     def save_video_frames(self, filename):
@@ -595,6 +645,7 @@ class VLASHVectorAsyncManager:
             background_factors = self.latest_background_info.get("factors")
         logging.info(
             "step=%s chunk_index=%s action_step=%s current_chunk_size=%s last_chunk_size=%s "
+            "active_chunk_size=%s "
             "should_launch=%s gripper_change=%s next_chunk_pending=%s background_pending=%s "
             "background_ready=%s background_factors=%s",
             self.batch_env_step,
@@ -602,6 +653,7 @@ class VLASHVectorAsyncManager:
             current_step,
             self.current_chunk_size,
             self.last_chunk_size,
+            self.active_chunk_size,
             should_launch,
             gripper_change,
             self.next_chunk_future is not None,
@@ -613,20 +665,53 @@ class VLASHVectorAsyncManager:
     def _inference_task(self, batch_obs_prepared):
         """在后台线程执行的推理函数"""
         with torch.inference_mode():
+            t0 = time.perf_counter()
             actions = self.policy.predict_action_chunk(batch_obs_prepared)
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+            self.predict_action_time_ms.append((time.perf_counter() - t0) * 1000.0)
             return actions.cpu().numpy() # [B, Horizon, ActionDim]
 
     def _background_adaptive_task(self, task_id, image, instruction, robot_state=None):
         """在后台线程执行的自适应chunk size调整"""
         if self.adaptive_chunker:
-            with self.chunker_lock:
-                _, info = self.adaptive_chunker.adaptive_chunk_heuristic(image, instruction, robot_state)
-                return {
-                    "task_id": task_id,
-                    "info": info,
-                    "current_horizon": self.adaptive_chunker.current_horizon,
-                }
+            t0 = time.perf_counter()
+            proposal = self.adaptive_chunker.propose_adaptive_chunk_heuristic(
+                image,
+                instruction,
+                robot_state,
+                current_horizon=self.current_chunk_size,
+            )
+            self.background_heuristic_time_ms.append((time.perf_counter() - t0) * 1000.0)
+            return {
+                "task_id": task_id,
+                "info": dict(proposal.get("info") or {}),
+                "current_horizon": proposal.get("current_horizon", self.current_chunk_size),
+                "needs_interruption": bool(proposal.get("needs_interruption", False)),
+            }
         return {}
+
+    def _value_func_task(self, task_id, image, instruction, attention_map, value_context):
+        if self.adaptive_chunker is None:
+            return {}
+        t0 = time.perf_counter()
+        proposal = self.adaptive_chunker.propose_value_horizon(
+            image,
+            instruction,
+            attention_map,
+            parsed_objs=value_context.get("target_object"),
+            boxes_xyxy=value_context.get("dino_boxes"),
+            phrases=value_context.get("phrases"),
+            continuity_info=value_context.get("continuity_info"),
+            current_horizon=value_context.get("current_horizon", self.current_chunk_size),
+            box_source=value_context.get("box_source"),
+        )
+        self.value_func_time_ms.append((time.perf_counter() - t0) * 1000.0)
+        return {
+            "task_id": task_id,
+            "info": dict(proposal.get("info") or {}),
+            "current_horizon": proposal.get("current_horizon", self.current_chunk_size),
+        }
 
     def _maybe_launch_background_adaptive(self, raw_obs: Dict[str, Any], task_description: str):
         """Queue one adaptive task for every step on a serial background worker."""
@@ -678,7 +763,67 @@ class VLASHVectorAsyncManager:
         background_info = dict(latest_result.get("info") or {})
         background_info["background_task_id"] = task_id
         background_info["current_horizon"] = latest_result.get("current_horizon", self.current_chunk_size)
+        background_info["needs_interruption"] = bool(latest_result.get("needs_interruption", False))
         return background_info
+
+    def _build_value_context(self, background_info: Optional[Dict[str, Any]] = None):
+        source = background_info or self.latest_background_info or {}
+        if not source:
+            return None
+        return {
+            "target_object": source.get("target_object"),
+            "dino_boxes": source.get("dino_boxes"),
+            "phrases": source.get("phrases"),
+            "continuity_info": source.get("continuity_info"),
+            "box_source": source.get("box_source"),
+            "current_horizon": source.get("current_horizon", self.current_chunk_size),
+        }
+
+    def _maybe_launch_value_func(self, raw_obs: Dict[str, Any], task_description: str, attention_map, value_context):
+        if self.adaptive_chunker is None:
+            return
+        if not value_context or not value_context.get("dino_boxes"):
+            logging.info("Skipping ValueFunc launch because no value context is available yet")
+            return
+        task_id = self.value_task_counter
+        self.value_task_counter += 1
+        future = self.value_executor.submit(
+            self._value_func_task,
+            task_id,
+            raw_obs["pixels"]["image"][0],
+            task_description,
+            attention_map,
+            value_context,
+        )
+        self.value_futures.append((task_id, future))
+
+    def _consume_value_func_result_nonblocking(self):
+        if not self.value_futures:
+            return None
+        latest_result = None
+        remaining = []
+        for task_id, future in self.value_futures:
+            if future.done():
+                try:
+                    result = future.result()
+                    if result:
+                        latest_result = result
+                except Exception as exc:
+                    logging.warning(f"Background value func task failed: {exc}")
+            else:
+                remaining.append((task_id, future))
+        self.value_futures = remaining
+        if latest_result is None:
+            return None
+        task_id = latest_result.get("task_id", -1)
+        if task_id < self.latest_consumed_value_task_id:
+            return None
+        self.latest_consumed_value_task_id = task_id
+        logging.info("Consuming value func result task_id=%s", task_id)
+        value_info = dict(latest_result.get("info") or {})
+        value_info["value_task_id"] = task_id
+        value_info["current_horizon"] = latest_result.get("current_horizon", self.current_chunk_size)
+        return value_info
 
     def launch_next_inference(self, raw_obs: Dict[str, Any], task_description: str):
         """启动后台推理"""
@@ -686,16 +831,19 @@ class VLASHVectorAsyncManager:
         self.per_env_inference_counts[self.active_env_mask] += 1
         self._record_launch_interval()
         if self.adaptive_chunker is not None:
-            logging.info(f"Launching inference for task")
+            logging.info(f"Launching inference for task: interval={self.launch_step_intervals[-1] if len(self.launch_step_intervals) > 0 else 'N/A'}")
         self.save_attention_step -= 1
         prepared_obs = self._prepare_batch_obs(raw_obs, task_description)
         self.valid_chunk_size = self.current_chunk_size
         # 启动推理任务
         self.next_chunk_future = self.executor.submit(self._inference_task, prepared_obs)
 
-    def reset_chunk(self, reason=False):
+    def reset_chunk(self, reason=False, set_chunk_size=False):
         self.current_chunks = self.next_chunk_future.result()
-        self.last_chunk_size = self.valid_chunk_size
+        self.active_chunk_size = self.valid_chunk_size
+        self.last_chunk_size = self.active_chunk_size
+        if set_chunk_size:
+            self.current_chunk_size = self.valid_chunk_size
         self.next_chunk_future = None
         if self.adaptive_chunker is not None:
             # self.adaptive_chunker.action_history = []
@@ -722,6 +870,33 @@ class VLASHVectorAsyncManager:
                 return False
         return False
 
+    def _apply_chunk_update_immediately(self, raw_obs: Dict[str, Any], task_description: str) -> bool:
+        """Make newly computed chunk sizes take effect immediately on the current control flow."""
+        if self.current_chunks is None:
+            return False
+
+        effective_limit = min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size)
+
+        if self.overlap_steps > 0 and self.next_chunk_future is None:
+            overlap_point = max(0, effective_limit - self.overlap_steps)
+            if self.chunk_index >= overlap_point:
+                logging.info(
+                    "Manager: Updated chunk size makes current index cross overlap point (%s >= %s), launching prefetch immediately...",
+                    self.chunk_index,
+                    overlap_point,
+                )
+                self.launch_next_inference(raw_obs, task_description)
+
+        if self.chunk_index >= effective_limit:
+            logging.info(
+                "Manager: Updated chunk size makes current chunk expired immediately (%s >= %s), switching now...",
+                self.chunk_index,
+                effective_limit,
+            )
+            return True
+
+        return False
+
     def get_action_batch(self, raw_obs: Dict[str, Any], task_description: str) -> np.ndarray:
         """
         获取当前步的 Batch Action
@@ -738,11 +913,12 @@ class VLASHVectorAsyncManager:
         # 第一次和后面的逻辑合一了
         background_info = None
         if self.current_chunks is None:
+            resumed_from_prefetch = self.next_chunk_future is not None
             if self.next_chunk_future is None:
                 self.launch_next_inference(raw_obs, task_description)
                 self.chunk_index = 0
             else:
-                self.chunk_index = self.overlap_steps                
+                self.chunk_index = self.overlap_steps
             self.reset_chunk()
             
             # 检查后台自适应任务是否完成
@@ -752,51 +928,79 @@ class VLASHVectorAsyncManager:
                 self.latest_background_info = background_info
                 final_chunk = background_info.get("current_horizon")
                 logging.info(f"background horizon: {final_chunk}")
+            value_info = self._consume_value_func_result_nonblocking()
+            if value_info is not None:
+                value_horizon = value_info.get("current_horizon")
+                if value_horizon is not None:
+                    final_chunk = min(final_chunk, value_horizon) if final_chunk is not None else value_horizon
+                    logging.info(f"ValueFunc background chunk size: {value_horizon}")
             
             # 获取注意力图并使用它进一步调整chunk size (只有在policy真正做chunk推理时才使用ValueFunc)
             if self.adaptive_chunker:
                 try:
+                    t0 = time.perf_counter()
                     attn_maps = self.policy.get_attn_maps(layers=self.target_layers, heads=range(8), force=True)
+                    if self.device.type == "cuda":
+                        torch.cuda.synchronize(self.device)
+                    self.attn_maps_time_ms.append((time.perf_counter() - t0) * 1000.0)
                     if attn_maps:
                         vla_attention_map = attn_maps #[layers, num_heads, seq_len]
-                        with self.chunker_lock:
-                            _, info = self.adaptive_chunker.ValueFunc(
-                                raw_obs["pixels"]['image'][0], 
-                                task_description, 
-                                vla_attention_map
-                            )
-                            attention_chunk_size = self.adaptive_chunker.current_horizon
-                            if final_chunk is not None:
-                                final_chunk = min(attention_chunk_size, final_chunk)
-                            else:
-                                final_chunk = attention_chunk_size
-                        # 立马根据Value func更新last_chunk_size，仅用当前指定的chunk size
-                        # self.last_chunk_size = min(attention_chunk_size, self.last_chunk_size)
-                        logging.info(f"Attention-based chunk size: {attention_chunk_size}")
+                        self._maybe_launch_value_func(
+                            raw_obs,
+                            task_description,
+                            vla_attention_map,
+                            self._build_value_context(background_info),
+                        )
+                        logging.info("Launched background ValueFunc task")
                 except Exception as e:
                     import traceback
                     logging.warning(f"Failed to get attention maps: {e}")
                     traceback.print_exc()
             if final_chunk is not None:
                 self.current_chunk_size = final_chunk
-                # self.last_chunk_size = max(self.last_chunk_size, self.current_chunk_size)
                 logging.info(f"Final chunk size: {self.current_chunk_size}")
+
+            # If we resume from a prefetched chunk and its starting index has already
+            # crossed the overlap point (e.g. chunk=5, overlap=3), launch the next
+            # prefetch immediately; otherwise this chunk would miss its own prefetch window.
+            if resumed_from_prefetch and self.overlap_steps > 0 and self.next_chunk_future is None:
+                overlap_point = min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size) - self.overlap_steps
+                if self.chunk_index >= overlap_point:
+                    logging.info(
+                        "Manager: Resumed prefetched chunk beyond overlap point (%s >= %s), launching next prefetch immediately...",
+                        self.chunk_index,
+                        overlap_point,
+                    )
+                    self.launch_next_inference(raw_obs, task_description)
         else:
             # 检查后台自适应任务是否完成
             background_info = self._consume_background_result_nonblocking()
             if background_info is not None:
-                self.current_chunk_size = background_info.get("current_horizon")
-                if self.adaptive_chunker.needs_interruption:
+                background_horizon = background_info.get("current_horizon")
+                if background_horizon is not None:
+                    self.current_chunk_size = background_horizon
+                    if self.current_chunks is not None and background_horizon < self.active_chunk_size:
+                        self.active_chunk_size = background_horizon
+                if background_info.get("needs_interruption", False):
                     logging.info(f"Interrupting current chunk due to: {background_info.get('factors', 'N/A')}")
                     # should_launch = True
                 if self.cfg.enable_gripper_interruption and self.should_interrupt_gripper():
                     should_launch = True
                     gripper_change = True
+                should_launch = self._apply_chunk_update_immediately(raw_obs, task_description) or should_launch
+            value_info = self._consume_value_func_result_nonblocking()
+            if value_info is not None:
+                value_horizon = value_info.get("current_horizon")
+                if value_horizon is not None:
+                    self.current_chunk_size = min(self.current_chunk_size, value_horizon)
+                    self.active_chunk_size = min(self.active_chunk_size, value_horizon)
+                    logging.info(f"Applying ValueFunc chunk size immediately: {self.current_chunk_size}")
+                    should_launch = self._apply_chunk_update_immediately(raw_obs, task_description) or should_launch
 
         # --- 3. 预取逻辑 (Hungry Strategy) ---
         # 当执行到当前 Chunk 的特定位置时，提前启动下一波推理
         if self.overlap_steps > 0:
-            overlap_point = min(self.current_chunk_size, self.n_action_steps, self.last_chunk_size) - self.overlap_steps
+            overlap_point = min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size) - self.overlap_steps
             if self.chunk_index == overlap_point and self.next_chunk_future is None:
                 logging.info(f"Manager: Reached overlap point ({overlap_point}), launching prefetch...")
                 self.launch_next_inference(raw_obs, task_description)
@@ -809,27 +1013,22 @@ class VLASHVectorAsyncManager:
                 # 重置模型的KV缓存，避免注意力掩码大小不匹配
                 logging.info(f"Manager: Interrupting current chunk with chunk size: {self.current_chunk_size}")    
                 self.launch_next_inference(raw_obs, task_description)
-                # 还要继续执行吗 执行的话就是index继续增加, 欸但是貌似这个没有起作用吧
-                # 因为后续chunk size可能增加会来了，那还是打断吧
                 
-            self.reset_chunk(gripper_change)
+            self.reset_chunk(gripper_change, set_chunk_size=True)
             self.chunk_index = 0
         
-        # 确保不超出当前chunk size
-        current_step = min(self.chunk_index, min(self.current_chunk_size, self.n_action_steps, self.last_chunk_size) - 1)
+        current_step = min(self.chunk_index, min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size) - 1)
         actions = self.current_chunks[:, current_step, :] # [B, ActionDim]
-        # print("gripper action: ", actions[0, -1])
 
         if self.adaptive_chunker:
-            with self.chunker_lock:
-                self.adaptive_chunker.enqueue_history(actions[0].tolist())
+            self.adaptive_chunker.enqueue_history(actions[0].tolist())
 
-        self._log_step_state(
-            current_step=current_step,
-            should_launch=should_launch,
-            gripper_change=gripper_change,
-            background_info=background_info,
-        )
+        # self._log_step_state(
+        #     current_step=current_step,
+        #     should_launch=should_launch,
+        #     gripper_change=gripper_change,
+        #     background_info=background_info,
+        # )
 
         # logging.info(f"Manager: Current chunk index: {self.chunk_index}")
 
@@ -837,7 +1036,7 @@ class VLASHVectorAsyncManager:
         self.chunk_index = (self.chunk_index + 1)
         # logging.info(f"last chunk size: {self.last_chunk_size}, valid chunk size: {self.valid_chunk_size}")
         # 当达到当前chunk size或最大步骤时，重置
-        if self.chunk_index >= min(self.current_chunk_size, self.n_action_steps, self.last_chunk_size):
+        if self.chunk_index >= min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size):
             self.current_chunks = None
             self.chunk_index = 0
         self.batch_env_step += 1

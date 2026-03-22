@@ -32,6 +32,7 @@ from lerobot.utils.utils import init_logging, inside_slurm
 from lerobot.utils.random_utils import set_seed
 
 from adaptive.monitor import GPUMonitor
+from adaptive.adaptivepolicyfinegrained_tracker_scoregate import AdaptiveActionChunker as TrackerChunker
 from evalpi05_adaptivefine_norm import (
     VLASHEvalConfig,
     VLASHVectorAsyncManager,
@@ -52,14 +53,18 @@ class PowerReplayEvalConfig(VLASHEvalConfig):
     save_video: bool = False
     use_monitor: bool = True
 
-    mode: str = "record"  # record | replay
+    mode: str = "record"  # record | replay | idle | policy_idle | policy_dino_idle
     trace_path: str = "outputs/eval/vlash_power_replay/trace.pkl.gz"
-    control_hz: float = 10.0
+    control_hz: float = 30.0
     monitor_gpu_id: int = 0
-    monitor_interval: float = 0.05
+    monitor_interval: float = 0.01
     save_trace_images_preview: bool = False
     replay_quiet: bool = True
     export_readable_trace: bool = True
+    idle_duration_s: float = 30.0
+    idle_warmup_s: float = 2.0
+    idle_create_cuda_context: bool = True
+    replay_internal_warmup: bool = True
 
     def __post_init__(self):
         super().__post_init__()
@@ -67,10 +72,14 @@ class PowerReplayEvalConfig(VLASHEvalConfig):
             raise ValueError("Power replay script only supports eval_batch_size=1")
         if self.max_episodes != 1:
             raise ValueError("Power replay script only supports max_episodes=1")
-        if self.mode not in {"record", "replay"}:
+        if self.mode not in {"record", "replay", "idle", "policy_idle", "policy_dino_idle"}:
             raise ValueError(f"Unsupported mode: {self.mode}")
         if self.control_hz <= 0:
             raise ValueError("control_hz must be positive")
+        if self.idle_duration_s <= 0:
+            raise ValueError("idle_duration_s must be positive")
+        if self.idle_warmup_s < 0:
+            raise ValueError("idle_warmup_s must be non-negative")
 
 
 def _extract_inference_input(obs: Dict[str, Any]) -> Dict[str, Any]:
@@ -209,6 +218,19 @@ def _build_monitor(cfg: PowerReplayEvalConfig):
     return GPUMonitor(gpu_id=cfg.monitor_gpu_id, interval=cfg.monitor_interval)
 
 
+def _format_launch_interval_export(task_key: str, stats: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        task_key: {
+            "count": stats.get("count", 0),
+            "distribution": stats.get("distribution", {}),
+            "mean": stats.get("mean", 0.0),
+            "min": stats.get("min"),
+            "max": stats.get("max"),
+            "intervals_by_batch": [stats.get("intervals", [])],
+        }
+    }
+
+
 def _record_single_task(
     vec_env: gym.vector.VectorEnv,
     policy,
@@ -278,6 +300,8 @@ def _record_single_task(
         "actions": trace_actions,
         "chunk_sizes": trace_chunk_sizes,
         "box_sources": trace_sources,
+        "launch_interval_stats": async_mgr.get_launch_interval_stats(),
+        "latency_breakdown_ms": async_mgr.get_latency_breakdown_stats(),
         "runtime_config": _collect_eval_runtime_config(cfg, async_mgr.adaptive_chunker),
         "monitor": monitor_stats,
         "recorded_at": time.time(),
@@ -298,30 +322,52 @@ def _replay_trace(trace_data: Dict[str, Any], policy, cfg: PowerReplayEvalConfig
         task_name=task_key,
         cfg=cfg,
     )
-    async_mgr.reset_state()
+    step_sleep_s = 1.0 / cfg.control_hz
+
+    def _run_replay_pass(capture_results: bool) -> Dict[str, Any]:
+        async_mgr.reset_state()
+        replay_actions: List[np.ndarray] = []
+        chunk_sizes: List[int] = []
+        per_step_max_abs_diff: List[float] = []
+
+        pbar = trange(
+            len(observations),
+            desc=" Replay" if capture_results else " Warmup",
+            leave=False,
+            disable=inside_slurm(),
+        )
+        for obs, recorded_action in zip(observations, recorded_actions):
+            async_mgr.set_active_env_mask(np.array([True], dtype=bool))
+            actions = async_mgr.get_action_batch(obs, task_description)
+            if capture_results:
+                replay_actions.append(np.array(actions, copy=True))
+                chunk_sizes.append(int(async_mgr.current_chunk_size))
+                diff = np.max(np.abs(np.asarray(actions) - np.asarray(recorded_action)))
+                per_step_max_abs_diff.append(float(diff))
+                time.sleep(step_sleep_s)
+        return {
+            "replay_actions": replay_actions,
+            "chunk_sizes": chunk_sizes,
+            "per_step_max_abs_diff": per_step_max_abs_diff,
+        }
+
+    if cfg.replay_internal_warmup:
+        logging.info("Running internal replay warmup before starting monitor")
+        _run_replay_pass(capture_results=False)
 
     monitor = _build_monitor(cfg)
     if cfg.use_monitor:
         monitor.start()
 
-    replay_actions: List[np.ndarray] = []
-    chunk_sizes: List[int] = []
-    per_step_max_abs_diff: List[float] = []
-    step_sleep_s = 1.0 / cfg.control_hz
-
-    pbar = trange(len(observations), desc=" Replay", leave=False, disable=inside_slurm())
-    for obs, recorded_action in zip(observations, recorded_actions):
-        async_mgr.set_active_env_mask(np.array([True], dtype=bool))
-        actions = async_mgr.get_action_batch(obs, task_description)
-        replay_actions.append(np.array(actions, copy=True))
-        chunk_sizes.append(int(async_mgr.current_chunk_size))
-        diff = np.max(np.abs(np.asarray(actions) - np.asarray(recorded_action)))
-        per_step_max_abs_diff.append(float(diff))
-        time.sleep(step_sleep_s)
+    replay_pass = _run_replay_pass(capture_results=True)
 
     if cfg.use_monitor:
         monitor.stop()
     monitor_stats = monitor.get_report() if cfg.use_monitor else None
+
+    replay_actions = replay_pass["replay_actions"]
+    chunk_sizes = replay_pass["chunk_sizes"]
+    per_step_max_abs_diff = replay_pass["per_step_max_abs_diff"]
 
     return {
         "task_key": task_key,
@@ -332,12 +378,129 @@ def _replay_trace(trace_data: Dict[str, Any], policy, cfg: PowerReplayEvalConfig
         "sleep_per_step_s": step_sleep_s,
         "inference_times": int(async_mgr.inference_times),
         "per_env_inference_counts": async_mgr.per_env_inference_counts.tolist(),
+        "launch_interval_stats": async_mgr.get_launch_interval_stats(),
+        "latency_breakdown_ms": async_mgr.get_latency_breakdown_stats(),
         "avg_replayed_chunk_size": float(np.mean(chunk_sizes)) if chunk_sizes else 0.0,
         "chunk_sizes": chunk_sizes,
         "action_max_abs_diff_mean": float(np.mean(per_step_max_abs_diff)) if per_step_max_abs_diff else 0.0,
         "action_max_abs_diff_max": float(np.max(per_step_max_abs_diff)) if per_step_max_abs_diff else 0.0,
         "monitor": monitor_stats,
         "runtime_config": _collect_eval_runtime_config(cfg, async_mgr.adaptive_chunker),
+    }
+
+
+def _measure_idle_power(cfg: PowerReplayEvalConfig) -> Dict[str, Any]:
+    monitor = _build_monitor(cfg)
+
+    if cfg.idle_create_cuda_context and torch.cuda.is_available():
+        device = torch.device(f"cuda:{cfg.monitor_gpu_id}")
+        with torch.no_grad():
+            warm_tensor = torch.zeros((1,), device=device)
+            _ = warm_tensor + 1
+        torch.cuda.synchronize(device)
+
+    if cfg.idle_warmup_s > 0:
+        time.sleep(cfg.idle_warmup_s)
+
+    if cfg.use_monitor:
+        monitor.clear()
+        monitor.start()
+
+    start_time = time.time()
+    time.sleep(cfg.idle_duration_s)
+    elapsed = time.time() - start_time
+
+    if cfg.use_monitor:
+        monitor.stop()
+    monitor_stats = monitor.get_report() if cfg.use_monitor else None
+
+    return {
+        "idle_duration_s": cfg.idle_duration_s,
+        "idle_warmup_s": cfg.idle_warmup_s,
+        "idle_create_cuda_context": cfg.idle_create_cuda_context,
+        "torch_cuda_available": torch.cuda.is_available(),
+        "measured_elapsed_s": elapsed,
+        "monitor": monitor_stats,
+        "runtime_config": {
+            "mode": cfg.mode,
+            "monitor_gpu_id": cfg.monitor_gpu_id,
+            "monitor_interval": cfg.monitor_interval,
+            "idle_duration_s": cfg.idle_duration_s,
+            "idle_warmup_s": cfg.idle_warmup_s,
+            "idle_create_cuda_context": cfg.idle_create_cuda_context,
+        },
+    }
+
+
+def _measure_loaded_power(
+    cfg: PowerReplayEvalConfig,
+    load_policy: bool,
+    load_dino: bool,
+) -> Dict[str, Any]:
+    policy = None
+    tracker_chunker = None
+
+    if load_policy:
+        policy = _build_policy(cfg)
+
+    if load_dino:
+        tracker_chunker = TrackerChunker(
+            min_horizon=cfg.adaptive_min_horizon,
+            max_horizon=cfg.adaptive_max_horizon,
+            uncertainty_threshold=cfg.adaptive_uncertainty_threshold,
+            coverage_threshold=cfg.adaptive_coverage_threshold,
+            continuity_threshold=cfg.adaptive_continuity_threshold,
+            enable_object_motion_penalty=cfg.enable_object_motion_penalty,
+        )
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    monitor = _build_monitor(cfg)
+    if cfg.idle_warmup_s > 0:
+        time.sleep(cfg.idle_warmup_s)
+
+    if cfg.use_monitor:
+        monitor.clear()
+        monitor.start()
+
+    start_time = time.time()
+    time.sleep(cfg.idle_duration_s)
+    elapsed = time.time() - start_time
+
+    if cfg.use_monitor:
+        monitor.stop()
+    monitor_stats = monitor.get_report() if cfg.use_monitor else None
+
+    policy_path = None
+    if load_policy and cfg.policy is not None:
+        policy_path = getattr(cfg.policy, "pretrained_path", None)
+
+    dino_runtime = None
+    if tracker_chunker is not None and hasattr(tracker_chunker, "get_runtime_config"):
+        dino_runtime = tracker_chunker.get_runtime_config().get("grounding_dino")
+
+    return {
+        "load_policy": load_policy,
+        "load_dino": load_dino,
+        "idle_duration_s": cfg.idle_duration_s,
+        "idle_warmup_s": cfg.idle_warmup_s,
+        "torch_cuda_available": torch.cuda.is_available(),
+        "measured_elapsed_s": elapsed,
+        "policy_path": policy_path,
+        "dino_runtime": dino_runtime,
+        "monitor": monitor_stats,
+        "runtime_config": {
+            "mode": cfg.mode,
+            "monitor_gpu_id": cfg.monitor_gpu_id,
+            "monitor_interval": cfg.monitor_interval,
+            "idle_duration_s": cfg.idle_duration_s,
+            "idle_warmup_s": cfg.idle_warmup_s,
+            "load_policy": load_policy,
+            "load_dino": load_dino,
+            "policy_path": policy_path,
+            "dino_runtime": dino_runtime,
+        },
     }
 
 
@@ -363,13 +526,18 @@ def run_benchmark(cfg: PowerReplayEvalConfig):
     logging.info(f"Use monitor: {cfg.use_monitor}")
     logging.info(f"Monitor GPU id: {cfg.monitor_gpu_id}")
     logging.info(f"Monitor interval: {cfg.monitor_interval}")
+    logging.info(f"Idle duration s: {cfg.idle_duration_s}")
+    logging.info(f"Idle warmup s: {cfg.idle_warmup_s}")
+    logging.info(f"Idle create cuda context: {cfg.idle_create_cuda_context}")
     logging.info("=" * 50)
 
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trace_path = Path(cfg.trace_path)
 
-    policy = _build_policy(cfg)
+    policy = None
+    if cfg.mode not in {"idle", "policy_idle", "policy_dino_idle"}:
+        policy = _build_policy(cfg)
 
     if cfg.mode == "record":
         if cfg.env_type != "libero":
@@ -378,6 +546,7 @@ def run_benchmark(cfg: PowerReplayEvalConfig):
         env_cfg = LiberoEnv(task=cfg.env_task, task_ids=cfg.task_ids)
         all_envs_dict = make_env(env_cfg, n_envs=1)
         results = {}
+        launch_interval_exports = {}
 
         try:
             for suite_name, tasks in all_envs_dict.items():
@@ -406,10 +575,14 @@ def run_benchmark(cfg: PowerReplayEvalConfig):
                         "trace_path": str(task_trace_path),
                         "success": trace_data["success"],
                         "num_steps": trace_data["num_steps"],
+                        "launch_interval_stats": trace_data["launch_interval_stats"],
                         "monitor": trace_data["monitor"],
                         "runtime_config": trace_data["runtime_config"],
                     }
                     results[task_key] = task_result
+                    launch_interval_exports.update(
+                        _format_launch_interval_export(task_key, trace_data["launch_interval_stats"])
+                    )
                     with open(out_dir / f"{task_key}_record_result.json", "w", encoding="utf-8") as f:
                         json.dump(task_result, f, indent=2)
         finally:
@@ -420,19 +593,38 @@ def run_benchmark(cfg: PowerReplayEvalConfig):
             "env_task": cfg.env_task,
             "results": results,
         }
-    else:
+    elif cfg.mode == "replay":
         trace_data = _load_trace(trace_path)
         replay_result = _replay_trace(trace_data, policy, cfg)
+        launch_interval_exports = _format_launch_interval_export(
+            replay_result["task_key"],
+            replay_result["launch_interval_stats"],
+        )
         final_results = {
             "mode": "replay",
             "trace_path": str(trace_path),
             "result": replay_result,
         }
+    else:
+        if cfg.mode == "idle":
+            idle_result = _measure_idle_power(cfg)
+        elif cfg.mode == "policy_idle":
+            idle_result = _measure_loaded_power(cfg, load_policy=True, load_dino=False)
+        else:
+            idle_result = _measure_loaded_power(cfg, load_policy=True, load_dino=True)
+        launch_interval_exports = {}
+        final_results = {
+            "mode": cfg.mode,
+            "result": idle_result,
+        }
 
     with open(out_dir / "full_benchmark_results.json", "w", encoding="utf-8") as f:
         json.dump(final_results, f, indent=2)
+    if launch_interval_exports:
+        with open(out_dir / "launch_interval_stats.json", "w", encoding="utf-8") as f:
+            json.dump(launch_interval_exports, f, indent=2)
 
-    runtime_config = final_results["result"]["runtime_config"] if cfg.mode == "replay" else None
+    runtime_config = final_results["result"]["runtime_config"] if cfg.mode in {"replay", "idle"} else None
     if runtime_config is None and final_results.get("results"):
         first_result = next(iter(final_results["results"].values()))
         runtime_config = first_result.get("runtime_config")
@@ -440,6 +632,8 @@ def run_benchmark(cfg: PowerReplayEvalConfig):
         _write_yaml_file(out_dir / "runtime_config.yaml", runtime_config)
 
     logging.info(f"Saved results to {out_dir / 'full_benchmark_results.json'}")
+    if launch_interval_exports:
+        logging.info(f"Saved launch interval stats to {out_dir / 'launch_interval_stats.json'}")
 
 
 if __name__ == "__main__":

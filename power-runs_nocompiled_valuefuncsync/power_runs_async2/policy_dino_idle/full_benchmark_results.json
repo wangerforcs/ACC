@@ -1,0 +1,40 @@
+{
+  "mode": "policy_dino_idle",
+  "result": {
+    "load_policy": true,
+    "load_dino": true,
+    "idle_duration_s": 30.0,
+    "idle_warmup_s": 2.0,
+    "torch_cuda_available": true,
+    "measured_elapsed_s": 30.03003430366516,
+    "policy_path": "/pub/data/wangzb/pi05_libero_finetuned",
+    "dino_runtime": {
+      "config_path": "/pub/data/wangzb/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py",
+      "checkpoint_path": "/pub/data/wangzb/GroundingDINO/weights/20260318_train2-3_best.pth",
+      "device": "cuda"
+    },
+    "monitor": {
+      "gpu_name": "NVIDIA L40",
+      "avg_power_w": 80.53,
+      "max_power_w": 81.2,
+      "total_energy_j": 2402.08,
+      "total_time_s": 29.83,
+      "samples_count": 2983
+    },
+    "runtime_config": {
+      "mode": "policy_dino_idle",
+      "monitor_gpu_id": 0,
+      "monitor_interval": 0.01,
+      "idle_duration_s": 30.0,
+      "idle_warmup_s": 2.0,
+      "load_policy": true,
+      "load_dino": true,
+      "policy_path": "/pub/data/wangzb/pi05_libero_finetuned",
+      "dino_runtime": {
+        "config_path": "/pub/data/wangzb/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py",
+        "checkpoint_path": "/pub/data/wangzb/GroundingDINO/weights/20260318_train2-3_best.pth",
+        "device": "cuda"
+      }
+    }
+  }
+}

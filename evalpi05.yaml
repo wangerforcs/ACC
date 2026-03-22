@@ -13,6 +13,7 @@ policy:
   n_action_steps: 30   # 每次推理生成的动作步数
   dtype: bfloat16
   device: cuda
+  # compile_model: true
   compile_model: false
   state_cond: false
   # fuse_qkv: true

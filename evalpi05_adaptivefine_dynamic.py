@@ -61,6 +61,7 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     """
 
     output_dir: str = "outputs/eval/vlash_adaptive_dynamic"
+    enable_object_motion_penalty: bool = True
 
     dynamic_bddl_file: str = (
         "/home/wangzb/vlash/LIBERO/libero/libero/bddl_files/libero_dynamic_examples/"
@@ -74,7 +75,7 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     dynamic_moving_object_name: str = "orange_juice_1"
     dynamic_motion_axis: str = "y"
     dynamic_motion_settle_steps: int = 10
-    dynamic_motion_drive_steps: int = 50
+    dynamic_motion_drive_steps: int = 40
     dynamic_motion_drive_speed: float = 0.005
     dynamic_motion_end_speed: float = 0.0
     dynamic_motion_return_enabled: bool = False

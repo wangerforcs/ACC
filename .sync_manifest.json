@@ -17,16 +17,24 @@
     "runtrackersscore.sh",
     "run_inference.py",
     "sync_to_accrepo.py",
-    "LIBERO/modified_libero_files.txt"
+    "LIBERO/modified_libero_files.txt",
+    "measure_cuda_context_power.py",
+    "measure_vla_latency.py",
+    "plot_fullout_power.py",
+    "export_fullout.py"
   ],
   "extra_folders": [
     "computeflops",
-    "trackersscoregood"
+    "trackersscoregood",
+    "power_runs_compiled_valuefuncasync",
+    "power_runs_compiled_valuefuncsync",
+    "power-runs_nocompiled_valuefuncasync",
+    "power-runs_nocompiled_valuefuncsync"
   ],
   "adaptive_file_count": 35,
-  "top_level_file_count": 15,
+  "top_level_file_count": 19,
   "modified_libero_file_count": 7,
-  "extra_folder_file_count": 9,
+  "extra_folder_file_count": 303,
   "copied": [
     {
       "path": "LIBERO/libero/libero/bddl_files/libero_dynamic_examples/test_dynamic_example.bddl",
@@ -86,7 +94,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -102,15 +110,15 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_balanced.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_heavy.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
@@ -218,7 +226,7 @@
     },
     {
       "path": "evalpi05.yaml",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_adaptive.py",
@@ -230,7 +238,7 @@
     },
     {
       "path": "evalpi05_adaptivefine_dynamic.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_adaptivefine_heavy.py",
@@ -238,19 +246,1211 @@
     },
     {
       "path": "evalpi05_adaptivefine_norm.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_power_replay.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "evalpi05_random_monitor.py",
       "changed": false
     },
     {
+      "path": "export_fullout.py",
+      "changed": true
+    },
+    {
       "path": "inspect_logs.py",
       "changed": false
+    },
+    {
+      "path": "measure_cuda_context_power.py",
+      "changed": true
+    },
+    {
+      "path": "measure_vla_latency.py",
+      "changed": true
+    },
+    {
+      "path": "plot_fullout_power.py",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/avg_power_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/fullout.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/fullout.txt",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async1/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async2/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_async3/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncasync/total_energy_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/avg_power_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async1/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async2/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/gpu_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/gpu_idle/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/gpu_idle_with_context/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/gpu_idle_with_context/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/policy_dino_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_async3/policy_idle/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power-runs_nocompiled_valuefuncsync/total_energy_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/avg_power_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async1/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async2/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_async3/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/power_runs_sync/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/total_energy_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/valuefunc/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/valuefunc/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncasync/valuefunc/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/avg_power_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/fullout.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/fullout.txt",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async1/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async2/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_async3/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_dino1/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_dino1/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_dino1/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed10/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed20/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/power_runs_sync/object9_replay_fixed5/runtime_config.yaml",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/total_energy_lines.png",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/valuefunc/full_benchmark_results.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/valuefunc/launch_interval_stats.json",
+      "changed": true
+    },
+    {
+      "path": "power_runs_compiled_valuefuncsync/valuefunc/runtime_config.yaml",
+      "changed": true
     },
     {
       "path": "run_inference.py",
@@ -266,7 +1466,7 @@
     },
     {
       "path": "sync_to_accrepo.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "trackersscoregood/libero_10.txt",

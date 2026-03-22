@@ -1,0 +1,15 @@
+env_task: libero_object
+use_adaptive_chunk: false
+enable_gripper_interruption: false
+enable_object_motion_penalty: false
+adaptive_min_horizon: 5
+adaptive_max_horizon: 30
+adaptive_uncertainty_threshold: 0.015
+adaptive_coverage_threshold: 0.1
+adaptive_continuity_threshold: 0.2
+adaptive_chunker_cls_path: "adaptive.adaptivepolicyfinegrained_tracker_scoregate:AdaptiveActionChunker"
+target_control_hz: 30.0
+eval_batch_size: 1
+max_episodes: 1
+seed: 1000
+adaptive_chunker: null
