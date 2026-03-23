@@ -24,7 +24,6 @@ if str(ROOT_DIR) not in sys.path:
 
 from adaptive.object_extractor.mock_extractor import extract_objects
 from adaptive.adaptivepolicyfinegrained_sam2image import AdaptiveActionChunker as SAM2Chunker
-# from adaptive.adaptivepolicyfinegrained_tracker import AdaptiveActionChunker as TrackerChunker
 from adaptive.adaptivepolicyfinegrained_tracker_scoregate import AdaptiveActionChunker as TrackerChunker
 
 

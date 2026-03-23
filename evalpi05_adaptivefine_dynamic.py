@@ -10,6 +10,7 @@ BDDL + dynamic OffScreenRenderEnv instead of the benchmark-provided static BDDL.
 import logging
 import time
 import traceback
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,10 +22,6 @@ import numpy as np
 import torch
 import yaml
 import draccus
-try:
-    import imageio
-except Exception:
-    imageio = None
 try:
     import mediapy as media
 except Exception:
@@ -62,6 +59,8 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
 
     output_dir: str = "outputs/eval/vlash_adaptive_dynamic"
     enable_object_motion_penalty: bool = True
+    dynamic_task_name: str = "orange_juice_dynamic"
+    dynamic_task_registry: str = "/home/wangzb/vlash/dynamic_task_registry.json"
 
     dynamic_bddl_file: str = (
         "/home/wangzb/vlash/LIBERO/libero/libero/bddl_files/libero_dynamic_examples/"
@@ -69,16 +68,29 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     )
     # 注意这个也要加入到extractor中，不然就会回退到提前返回导致实际chunk size并没有变
     dynamic_task_description: str = "pick up the orange juice and place it in the basket"
-    # dynamic_task_description: str = "pick up the orange juice and place it in the moving basket"
     dynamic_shell_task_id: int = 9
     dynamic_use_init_states: bool = False
     dynamic_moving_object_name: str = "orange_juice_1"
     dynamic_motion_axis: str = "y"
-    dynamic_motion_settle_steps: int = 10
-    dynamic_motion_drive_steps: int = 40
-    dynamic_motion_drive_speed: float = 0.005
+    dynamic_motion_path: str = "line"
+    dynamic_motion_secondary_axis: str | None = None
+    dynamic_motion_turn_direction: str = "left"
+    dynamic_motion_turn_step: int | None = None
+    dynamic_motion_turn_cycles: int = 1
+    dynamic_motion_initial_speed: float | None = None
+    dynamic_motion_surface_friction_scale: float | None = None
+    dynamic_motion_settle_steps: int = 15
+    dynamic_motion_drive_steps: int = 12
+    dynamic_motion_drive_speed: float = 0.01
+    dynamic_motion_secondary_speed: float | None = None
     dynamic_motion_end_speed: float = 0.0
+    dynamic_motion_friction_scale: float = 0.15
+    dynamic_motion_friction_restore_step: int | None = None
+    dynamic_motion_object_resistance_scale: float | None = None
+    dynamic_motion_post_restore_velocity_decay: float = 0.97
     dynamic_motion_return_enabled: bool = False
+    dynamic_motion_amplitude: float = 0.15
+    dynamic_motion_frequency_hz: float = 0.01
     dynamic_save_video: bool = True
     dynamic_video_dir: str = "outputs/eval/dynamic_videos"
     dynamic_video_fps: int = 20
@@ -126,26 +138,10 @@ class RecordingVecEnvWrapper:
         if not self.enabled or not self.frames or self.output_path is None:
             return
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        if imageio is not None:
-            with imageio.get_writer(str(self.output_path), fps=self.fps) as writer:
-                for frame in self.frames:
-                    writer.append_data(frame)
-            return
-        if media is not None:
-            media.write_video(str(self.output_path), self.frames, fps=self.fps)
-            return
-
-        h, w = self.frames[0].shape[:2]
-        writer = cv2.VideoWriter(
-            str(self.output_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            self.fps,
-            (w, h),
-        )
-        for frame in self.frames:
-            # vec_env.render() returns RGB; cv2 expects BGR.
-            writer.write(frame[:, :, ::-1])
-        writer.release()
+        frames = [np.ascontiguousarray(np.asarray(frame), dtype=np.uint8) for frame in self.frames]
+        if media is None:
+            raise RuntimeError("mediapy is required to save dynamic videos")
+        media.write_video(str(self.output_path), frames, fps=self.fps)
 
     def __getattr__(self, name):
         return getattr(self.vec_env, name)
@@ -156,6 +152,21 @@ def _load_default_eval_yaml(cfg: VLASHDynamicLiberoEvalConfig) -> dict[str, Any]
     if not source_yaml.exists():
         raise FileNotFoundError(f"default_eval_yaml does not exist: {source_yaml}")
     return yaml.safe_load(source_yaml.read_text(encoding="utf-8")) or {}
+
+
+def _apply_dynamic_task_registry(cfg: VLASHDynamicLiberoEvalConfig) -> None:
+    registry_path = Path(cfg.dynamic_task_registry)
+    if not registry_path.exists():
+        raise FileNotFoundError(f"dynamic_task_registry does not exist: {registry_path}")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    if cfg.dynamic_task_name not in registry:
+        available = ", ".join(sorted(registry.keys()))
+        raise ValueError(f"Unknown dynamic_task_name={cfg.dynamic_task_name}. Available: {available}")
+
+    task_cfg = registry[cfg.dynamic_task_name]
+    for key, value in task_cfg.items():
+        if hasattr(cfg, key):
+            setattr(cfg, key, value)
 
 
 def _resolve_train_cfg(cfg: VLASHDynamicLiberoEvalConfig, raw_default_cfg: dict[str, Any]) -> VLASHTrainConfig:
@@ -232,11 +243,25 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
             "camera_widths": self.observation_width,
             "moving_object_name": cfg.dynamic_moving_object_name,
             "motion_axis": cfg.dynamic_motion_axis,
+            "motion_path": cfg.dynamic_motion_path,
+            "motion_secondary_axis": cfg.dynamic_motion_secondary_axis,
+            "motion_turn_direction": cfg.dynamic_motion_turn_direction,
+            "motion_turn_step": cfg.dynamic_motion_turn_step,
+            "motion_turn_cycles": cfg.dynamic_motion_turn_cycles,
+            "motion_initial_speed": cfg.dynamic_motion_initial_speed,
+            "motion_surface_friction_scale": cfg.dynamic_motion_surface_friction_scale,
             "motion_settle_steps": cfg.dynamic_motion_settle_steps,
             "motion_drive_steps": cfg.dynamic_motion_drive_steps,
             "motion_drive_speed": cfg.dynamic_motion_drive_speed,
+            "motion_secondary_speed": cfg.dynamic_motion_secondary_speed,
             "motion_end_speed": cfg.dynamic_motion_end_speed,
+            "motion_friction_scale": cfg.dynamic_motion_friction_scale,
+            "motion_friction_restore_step": cfg.dynamic_motion_friction_restore_step,
+            "motion_object_resistance_scale": cfg.dynamic_motion_object_resistance_scale,
+            "motion_post_restore_velocity_decay": cfg.dynamic_motion_post_restore_velocity_decay,
             "motion_return_enabled": cfg.dynamic_motion_return_enabled,
+            "motion_amplitude": cfg.dynamic_motion_amplitude,
+            "motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
         }
         env = OffScreenRenderEnv(**env_args)
         env.reset()
@@ -253,6 +278,7 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
 def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
     init_logging()
     _configure_component_log_levels(cfg)
+    _apply_dynamic_task_registry(cfg)
     set_seed(cfg.seed)
 
     torch.backends.cudnn.benchmark = True
@@ -269,15 +295,31 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
     logging.info("Dynamic Env Setup")
     logging.info(f"Dynamic BDDL: {cfg.dynamic_bddl_file}")
     logging.info(f"Dynamic task description: {cfg.dynamic_task_description}")
+    logging.info(f"Dynamic task name: {cfg.dynamic_task_name}")
+    logging.info(f"Dynamic task registry: {cfg.dynamic_task_registry}")
     logging.info(f"Dynamic shell task id: {cfg.dynamic_shell_task_id}")
     logging.info(f"Dynamic use init states: {cfg.dynamic_use_init_states}")
     logging.info(f"Dynamic moving object: {cfg.dynamic_moving_object_name}")
     logging.info(f"Dynamic motion axis: {cfg.dynamic_motion_axis}")
+    logging.info(f"Dynamic motion path: {cfg.dynamic_motion_path}")
+    logging.info(f"Dynamic motion secondary axis: {cfg.dynamic_motion_secondary_axis}")
+    logging.info(f"Dynamic motion turn direction: {cfg.dynamic_motion_turn_direction}")
+    logging.info(f"Dynamic motion turn step: {cfg.dynamic_motion_turn_step}")
+    logging.info(f"Dynamic motion turn cycles: {cfg.dynamic_motion_turn_cycles}")
+    logging.info(f"Dynamic motion initial speed: {cfg.dynamic_motion_initial_speed}")
+    logging.info(f"Dynamic motion surface friction scale: {cfg.dynamic_motion_surface_friction_scale}")
     logging.info(f"Dynamic motion settle steps: {cfg.dynamic_motion_settle_steps}")
     logging.info(f"Dynamic motion drive steps: {cfg.dynamic_motion_drive_steps}")
     logging.info(f"Dynamic motion drive speed: {cfg.dynamic_motion_drive_speed}")
+    logging.info(f"Dynamic motion secondary speed: {cfg.dynamic_motion_secondary_speed}")
     logging.info(f"Dynamic motion end speed: {cfg.dynamic_motion_end_speed}")
+    logging.info(f"Dynamic motion friction scale: {cfg.dynamic_motion_friction_scale}")
+    logging.info(f"Dynamic motion friction restore step: {cfg.dynamic_motion_friction_restore_step}")
+    logging.info(f"Dynamic object resistance scale: {cfg.dynamic_motion_object_resistance_scale}")
+    logging.info(f"Dynamic post-restore velocity decay: {cfg.dynamic_motion_post_restore_velocity_decay}")
     logging.info(f"Dynamic motion return enabled: {cfg.dynamic_motion_return_enabled}")
+    logging.info(f"Dynamic motion amplitude: {cfg.dynamic_motion_amplitude}")
+    logging.info(f"Dynamic motion frequency hz: {cfg.dynamic_motion_frequency_hz}")
     logging.info(f"Dynamic save video: {cfg.dynamic_save_video}")
     logging.info(f"Dynamic video dir: {cfg.dynamic_video_dir or (Path(cfg.output_dir) / 'dynamic_videos')}")
     logging.info("=" * 50)
@@ -331,10 +373,26 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
                     task_description,
                     task_name=task_name,
                 )
+                logging.info(
+                    "Dynamic eval returned for task=%s: sr=%.4f, episodes=%s, inference_times=%s",
+                    task_name,
+                    task_info["sr"],
+                    task_info["count"],
+                    task_info["inference_times"],
+                )
                 if shared_chunker_runtime_config is None and cfg.use_adaptive_chunk:
                     shared_chunker_runtime_config = task_info.get("adaptive_chunker_runtime_config")
+                logging.info(
+                    "About to save dynamic video for task=%s to %s (enabled=%s, buffered_frames=%s)",
+                    task_name,
+                    recording_env.output_path,
+                    cfg.dynamic_save_video,
+                    len(recording_env.frames),
+                )
                 recording_env.save_video()
+                logging.info("Finished saving dynamic video for task=%s", task_name)
 
+                logging.info("About to record per-task results for task=%s", task_name)
                 results_per_task[f"{suite_name}_{task_id}"] = {
                     "task_description": task_description,
                     "success_rate": task_info["sr"],
@@ -349,6 +407,7 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
                     "avg_successful_inference_times": task_info["avg_successful_inference_times"],
                 }
                 launch_interval_results[f"{suite_name}_{task_id}"] = task_info["launch_interval_stats"]
+                logging.info("Recorded per-task results for task=%s", task_name)
                 suite_successful_inference_counts.setdefault(suite_name, [])
                 suite_successful_inference_counts[suite_name].extend(task_info["successful_inference_counts"])
                 overall_successes.extend(task_info["success_list"])
@@ -357,22 +416,39 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
         out_dir = Path(cfg.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         total_time = time.time() - start_time
+        logging.info("Finished all dynamic tasks, preparing final result artifacts in %s", out_dir)
 
         runtime_config = _collect_eval_runtime_config(cfg, None)
         if shared_chunker_runtime_config is not None:
             runtime_config["adaptive_chunker"] = shared_chunker_runtime_config
         runtime_config["dynamic_env"] = {
             "dynamic_bddl_file": cfg.dynamic_bddl_file,
+            "dynamic_task_name": cfg.dynamic_task_name,
+            "dynamic_task_registry": cfg.dynamic_task_registry,
             "dynamic_task_description": cfg.dynamic_task_description,
             "dynamic_shell_task_id": cfg.dynamic_shell_task_id,
             "dynamic_use_init_states": cfg.dynamic_use_init_states,
             "dynamic_moving_object_name": cfg.dynamic_moving_object_name,
             "dynamic_motion_axis": cfg.dynamic_motion_axis,
+            "dynamic_motion_path": cfg.dynamic_motion_path,
+            "dynamic_motion_secondary_axis": cfg.dynamic_motion_secondary_axis,
+            "dynamic_motion_turn_direction": cfg.dynamic_motion_turn_direction,
+            "dynamic_motion_turn_step": cfg.dynamic_motion_turn_step,
+            "dynamic_motion_turn_cycles": cfg.dynamic_motion_turn_cycles,
+            "dynamic_motion_initial_speed": cfg.dynamic_motion_initial_speed,
+            "dynamic_motion_surface_friction_scale": cfg.dynamic_motion_surface_friction_scale,
             "dynamic_motion_settle_steps": cfg.dynamic_motion_settle_steps,
             "dynamic_motion_drive_steps": cfg.dynamic_motion_drive_steps,
             "dynamic_motion_drive_speed": cfg.dynamic_motion_drive_speed,
+            "dynamic_motion_secondary_speed": cfg.dynamic_motion_secondary_speed,
             "dynamic_motion_end_speed": cfg.dynamic_motion_end_speed,
+            "dynamic_motion_friction_scale": cfg.dynamic_motion_friction_scale,
+            "dynamic_motion_friction_restore_step": cfg.dynamic_motion_friction_restore_step,
+            "dynamic_motion_object_resistance_scale": cfg.dynamic_motion_object_resistance_scale,
+            "dynamic_motion_post_restore_velocity_decay": cfg.dynamic_motion_post_restore_velocity_decay,
             "dynamic_motion_return_enabled": cfg.dynamic_motion_return_enabled,
+            "dynamic_motion_amplitude": cfg.dynamic_motion_amplitude,
+            "dynamic_motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
             "dynamic_save_video": cfg.dynamic_save_video,
             "dynamic_video_dir": cfg.dynamic_video_dir,
             "dynamic_video_fps": cfg.dynamic_video_fps,
@@ -417,16 +493,23 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
             },
             "runtime_config": runtime_config,
         }
+        logging.info("Built final_results structure for dynamic eval")
 
+        logging.info("Writing dynamic full_benchmark_results.json to %s", out_dir / "full_benchmark_results.json")
         (out_dir / "full_benchmark_results.json").write_text(
             __import__("json").dumps(final_results, indent=2),
             encoding="utf-8",
         )
+        logging.info("Wrote dynamic full_benchmark_results.json")
+        logging.info("Writing dynamic launch_interval_stats.json to %s", out_dir / "launch_interval_stats.json")
         (out_dir / "launch_interval_stats.json").write_text(
             __import__("json").dumps(launch_interval_results, indent=2),
             encoding="utf-8",
         )
+        logging.info("Wrote dynamic launch_interval_stats.json")
+        logging.info("Writing dynamic runtime_config.yaml to %s", out_dir / "runtime_config.yaml")
         _write_yaml_file(out_dir / "runtime_config.yaml", runtime_config)
+        logging.info("Wrote dynamic runtime_config.yaml")
 
         logging.info("=" * 50)
         logging.info(f"FINAL OVERALL SR: {final_results['overall']['avg_success_rate'] * 100:.2f}%")
@@ -464,7 +547,11 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
             )
         logging.info("=" * 50)
 
-        close_envs(all_envs_dict)
+        # Dynamic LIBERO teardown has been unstable in practice and can segfault
+        # after all outputs are already written. Since this script runs as a
+        # standalone process per experiment, we intentionally skip explicit
+        # close_envs() here and let the process exit reclaim resources.
+        return
 
 
 if __name__ == "__main__":

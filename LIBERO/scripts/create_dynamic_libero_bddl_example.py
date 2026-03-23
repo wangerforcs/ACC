@@ -1,8 +1,8 @@
 """
 Create a clean dynamic-task BDDL with only the task-essential objects.
 
-By default this emits a minimal orange-juice-into-basket scene rather than
-copying all distractor objects from the original LIBERO task.
+By default this emits the original minimal orange-juice-into-basket scene.
+Alternative dynamic-task BDDL files can live alongside it in the same folder.
 """
 
 from pathlib import Path

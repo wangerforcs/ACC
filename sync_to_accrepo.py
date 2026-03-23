@@ -47,6 +47,7 @@ DEFAULT_TOP_LEVEL_FILES = [
     "measure_vla_latency.py",
     "plot_fullout_power.py",
     "export_fullout.py",
+    "dynamic_task_registry.json",
 ]
 
 # 新增：需要整体复制的额外文件夹列表
@@ -57,6 +58,7 @@ DEFAULT_EXTRA_FOLDERS = [
     "power_runs_compiled_valuefuncsync",
     "power-runs_nocompiled_valuefuncasync",
     "power-runs_nocompiled_valuefuncsync",
+    "vlash"
     # 例子：
     # "configs",
     # "tools",

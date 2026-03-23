@@ -23,6 +23,9 @@ PREDEFINED_RESULTS = {
     "pick up the ketchup and place it in the basket": ["ketchup", "basket"],
     "pick up the milk and place it in the basket": ["milk", "basket"],
     "pick up the orange juice and place it in the basket": ["orange juice", "basket"],
+    "pick up the bbq sauce and place it in the moving basket": ["bbq sauce", "basket"],
+    "pick up the bbq sauce and place it on the plate": ["bbq sauce", "plate"], #我新增的
+    "pick up the cream cheese and place it on the plate": ["cream cheese", "plate"],
     "pick up the salad dressing and place it in the basket": ["salad dressing", "basket"],
     "pick up the tomato sauce and place it in the basket": ["tomato sauce", "basket"],
     "pick up the black bowl between the plate and the ramekin and place it on the plate": ["black bowl between the plate and the ramekin", "plate"],

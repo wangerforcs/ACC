@@ -331,6 +331,7 @@ class VLASHVectorAsyncManager:
                 coverage_threshold=cfg.adaptive_coverage_threshold,
                 continuity_threshold=env_continuity_threshold,
                 enable_object_motion_penalty=cfg.enable_object_motion_penalty,
+                dynamic_motion_object_name=getattr(cfg, "dynamic_moving_object_name", None),
                 dino_refresh_interval=cfg.dino_refresh_interval,
             )
             # 初始chunk size
@@ -426,6 +427,32 @@ class VLASHVectorAsyncManager:
         self.attn_maps_time_ms = []
         self.value_func_time_ms = []
         self.background_heuristic_time_ms = []
+
+    def shutdown(self):
+        """显式关闭后台线程池，避免在解释器退出阶段留下悬挂 worker。"""
+        try:
+            if self.next_chunk_future:
+                self.next_chunk_future.cancel()
+        except Exception:
+            pass
+        for _, future in self.background_futures:
+            try:
+                future.cancel()
+            except Exception:
+                pass
+        for _, future in self.value_futures:
+            try:
+                future.cancel()
+            except Exception:
+                pass
+        for executor in (self.executor, self.background_executor, self.value_executor):
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception:
+                try:
+                    executor.shutdown(wait=False)
+                except Exception:
+                    pass
 
     def set_active_env_mask(self, active_mask):
         active_mask = np.asarray(active_mask, dtype=bool)
@@ -683,6 +710,7 @@ class VLASHVectorAsyncManager:
                 current_horizon=self.current_chunk_size,
             )
             self.background_heuristic_time_ms.append((time.perf_counter() - t0) * 1000.0)
+            proposal = self._normalize_chunk_proposal(proposal)
             return {
                 "task_id": task_id,
                 "info": dict(proposal.get("info") or {}),
@@ -707,11 +735,25 @@ class VLASHVectorAsyncManager:
             box_source=value_context.get("box_source"),
         )
         self.value_func_time_ms.append((time.perf_counter() - t0) * 1000.0)
+        proposal = self._normalize_chunk_proposal(proposal)
         return {
             "task_id": task_id,
             "info": dict(proposal.get("info") or {}),
             "current_horizon": proposal.get("current_horizon", self.current_chunk_size),
         }
+
+    def _normalize_chunk_proposal(self, proposal):
+        if proposal is None:
+            return {}
+        if isinstance(proposal, dict):
+            return proposal
+        if isinstance(proposal, tuple) and len(proposal) == 2:
+            horizon, info = proposal
+            return {
+                "current_horizon": horizon,
+                "info": dict(info or {}),
+            }
+        raise TypeError(f"Unsupported chunk proposal type: {type(proposal)!r}")
 
     def _maybe_launch_background_adaptive(self, raw_obs: Dict[str, Any], task_description: str):
         """Queue one adaptive task for every step on a serial background worker."""
@@ -1082,68 +1124,76 @@ def eval_single_vec_env(
     monitor = GPUMonitor(gpu_id=0, interval=0.05)
     if cfg.use_monitor:
         monitor.start()
-    for b in range(n_batches):
-        # 使用全局种子 + 批次索引作为种子，确保每次运行结果一致
-        batch_seed = cfg.seed + b
-        observation, info = vec_env.reset(seed=batch_seed)
-        async_mgr.reset_state()
-        
-        dones = np.array([False] * cfg.eval_batch_size)
-        batch_success = np.array([False] * cfg.eval_batch_size)
-        batch_steps = np.zeros(cfg.eval_batch_size, dtype=int)
-        
-        pbar = trange(max_steps, desc=f" Batch {b+1}/{n_batches}", leave=False, disable=inside_slurm())
-        for step in pbar:
-            if np.all(dones): break
-            async_mgr.set_active_env_mask(~dones)
+    try:
+        for b in range(n_batches):
+            # 使用全局种子 + 批次索引作为种子，确保每次运行结果一致
+            batch_seed = cfg.seed + b
+            observation, info = vec_env.reset(seed=batch_seed)
+            async_mgr.reset_state()
             
-            # 使用异步管理器直接获取 Batch Actions
-            # 它内部会自动处理：
-            # 1. 什么时候该在后台跑推理
-            # 2. 什么时候该等待推理结果并切换 Chunk
-            # 3. 后台运行Grounding DINO并调整chunk size
-            # 4. 根据attention map进一步调整chunk size
-            actions = async_mgr.get_action_batch(observation, task_description)
+            dones = np.array([False] * cfg.eval_batch_size)
+            batch_success = np.array([False] * cfg.eval_batch_size)
+            batch_steps = np.zeros(cfg.eval_batch_size, dtype=int)
             
-            step_start = time.perf_counter()
-            observation, reward, terminated, truncated, info = vec_env.step(actions)
-            env_step_elapsed = time.perf_counter() - step_start
-            env_step_times_ms.append(env_step_elapsed * 1000.0)
+            pbar = trange(max_steps, desc=f" Batch {b+1}/{n_batches}", leave=False, disable=inside_slurm())
+            for step in pbar:
+                if np.all(dones): break
+                async_mgr.set_active_env_mask(~dones)
+                
+                # 使用异步管理器直接获取 Batch Actions
+                # 它内部会自动处理：
+                # 1. 什么时候该在后台跑推理
+                # 2. 什么时候该等待推理结果并切换 Chunk
+                # 3. 后台运行Grounding DINO并调整chunk size
+                # 4. 根据attention map进一步调整chunk size
+                actions = async_mgr.get_action_batch(observation, task_description)
+                
+                step_start = time.perf_counter()
+                observation, reward, terminated, truncated, info = vec_env.step(actions)
+                env_step_elapsed = time.perf_counter() - step_start
+                env_step_times_ms.append(env_step_elapsed * 1000.0)
 
-            if cfg.target_control_hz is not None:
-                target_period_s = 1.0 / cfg.target_control_hz
-                extra_sleep_s = max(0.0, target_period_s - env_step_elapsed)
-                if extra_sleep_s > 0:
-                    time.sleep(extra_sleep_s)
-                control_sleep_times_ms.append(extra_sleep_s * 1000.0)
-            
-            # 增加步骤计数
-            batch_steps[~dones] += 1
-            
-            # 成功率统计逻辑
-            if "final_info" in info:
-                final_info = info["final_info"]
-                if isinstance(final_info, dict) and "is_success" in final_info:
-                    is_success_array = final_info["is_success"]
-                    just_finished = (terminated | truncated) & (~dones)
-                    if np.any(just_finished):
-                        batch_success = np.where(just_finished, is_success_array, batch_success)
-            
-            dones = terminated | truncated | dones
+                if cfg.target_control_hz is not None:
+                    target_period_s = 1.0 / cfg.target_control_hz
+                    extra_sleep_s = max(0.0, target_period_s - env_step_elapsed)
+                    if extra_sleep_s > 0:
+                        time.sleep(extra_sleep_s)
+                    control_sleep_times_ms.append(extra_sleep_s * 1000.0)
+                
+                # 增加步骤计数
+                batch_steps[~dones] += 1
+                
+                # 成功率统计逻辑
+                if "final_info" in info:
+                    final_info = info["final_info"]
+                    if isinstance(final_info, dict) and "is_success" in final_info:
+                        is_success_array = final_info["is_success"]
+                        just_finished = (terminated | truncated) & (~dones)
+                        if np.any(just_finished):
+                            batch_success = np.where(just_finished, is_success_array, batch_success)
+                
+                dones = terminated | truncated | dones
 
-        successes.extend(batch_success.tolist())
-        episode_steps.extend(batch_steps.tolist())
-        batch_episode_count = min(cfg.eval_batch_size, total_episodes - len(per_episode_inference_counts))
-        per_episode_inference_counts.extend(
-            async_mgr.per_env_inference_counts[:batch_episode_count].tolist()
-        )
-        total_inference_times += async_mgr.inference_times
-        all_launch_intervals.extend(async_mgr.launch_step_intervals)
-        launch_interval_batches.append(list(async_mgr.launch_step_intervals))
+            successes.extend(batch_success.tolist())
+            episode_steps.extend(batch_steps.tolist())
+            batch_episode_count = min(cfg.eval_batch_size, total_episodes - len(per_episode_inference_counts))
+            per_episode_inference_counts.extend(
+                async_mgr.per_env_inference_counts[:batch_episode_count].tolist()
+            )
+            total_inference_times += async_mgr.inference_times
+            all_launch_intervals.extend(async_mgr.launch_step_intervals)
+            launch_interval_batches.append(list(async_mgr.launch_step_intervals))
 
-        # 保存视频
-        if cfg.save_video:
-            async_mgr.save_video_frames(f"{task_name}_env0_batch{b}")
+            # 保存视频
+            if cfg.save_video:
+                async_mgr.save_video_frames(f"{task_name}_env0_batch{b}")
+    finally:
+        if cfg.use_monitor:
+            try:
+                monitor.stop()
+            except Exception:
+                pass
+        async_mgr.shutdown()
 
     if all_launch_intervals:
         dist = Counter(all_launch_intervals)
@@ -1166,7 +1216,6 @@ def eval_single_vec_env(
         }
 
     if cfg.use_monitor:
-        monitor.stop()
         stats = monitor.get_report() 
         logging.info(f"inference times: {total_inference_times}")
         logging.info(f"GPU Monitor Stats: {stats}")
