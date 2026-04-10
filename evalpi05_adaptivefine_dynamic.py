@@ -71,13 +71,17 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     dynamic_shell_task_id: int = 9
     dynamic_use_init_states: bool = False
     dynamic_moving_object_name: str = "orange_juice_1"
+    dynamic_motion_trajectory: str | None = None
     dynamic_motion_axis: str = "y"
     dynamic_motion_path: str = "line"
+    dynamic_motion_drive_type: str | None = None
     dynamic_motion_secondary_axis: str | None = None
     dynamic_motion_turn_direction: str = "left"
     dynamic_motion_turn_step: int | None = None
     dynamic_motion_turn_cycles: int = 1
     dynamic_motion_initial_speed: float | None = None
+    dynamic_motion_drive_mode: str = "velocity"
+    dynamic_motion_speed_profile: str | None = None
     dynamic_motion_surface_friction_scale: float | None = None
     dynamic_motion_settle_steps: int = 15
     dynamic_motion_drive_steps: int = 12
@@ -87,19 +91,26 @@ class VLASHDynamicLiberoEvalConfig(VLASHEvalConfig):
     dynamic_motion_friction_scale: float = 0.15
     dynamic_motion_friction_restore_step: int | None = None
     dynamic_motion_object_resistance_scale: float | None = None
-    dynamic_motion_post_restore_velocity_decay: float = 0.97
+    dynamic_motion_velocity_decay: float | None = None
     dynamic_motion_return_enabled: bool = False
+    dynamic_motion_stop_on_gripper_contact: bool = False
     dynamic_motion_amplitude: float = 0.15
     dynamic_motion_frequency_hz: float = 0.01
     dynamic_save_video: bool = True
     dynamic_video_dir: str = "outputs/eval/dynamic_videos"
     dynamic_video_fps: int = 20
+    # Dynamic eval videos are mainly used for debugging, so enable the
+    # existing step/bbox overlay by default.
+    video_overlay_debug: bool = True
 
     # Allow dynamic eval to bootstrap these from the default yaml instead of
     # requiring the full training config at parser construction time.
-    # train_cfg: Any = None
-    # policy: Any = None
     default_eval_yaml: str = "/home/wangzb/vlash/evalpi05.yaml"
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.target_control_hz is not None:
+            self.dynamic_video_fps = int(round(float(self.target_control_hz)))
 
 
 class RecordingVecEnvWrapper:
@@ -109,8 +120,14 @@ class RecordingVecEnvWrapper:
         self.output_path = output_path
         self.fps = fps
         self.frames: list[np.ndarray] = []
+        self.episode_frames: list[list[np.ndarray]] = []
+        self._episode_started = False
+        self.frame_annotator = None
 
-    def _capture_frame(self):
+    def set_frame_annotator(self, annotator):
+        self.frame_annotator = annotator
+
+    def _capture_frame(self, raw_obs=None):
         if not self.enabled:
             return
         try:
@@ -121,27 +138,47 @@ class RecordingVecEnvWrapper:
             return
         frame = np.asarray(frame)
         if frame.ndim == 3:
+            if self.frame_annotator is not None:
+                try:
+                    frame = self.frame_annotator(frame, raw_obs)
+                except Exception:
+                    pass
             self.frames.append(frame.copy())
 
     def reset(self, *args, **kwargs):
+        if self.enabled and self._episode_started and self.frames:
+            self.episode_frames.append(self.frames)
+            self.frames = []
         out = self.vec_env.reset(*args, **kwargs)
-        self._capture_frame()
+        self._episode_started = True
+        raw_obs = out[0] if isinstance(out, tuple) and len(out) > 0 else out
+        self._capture_frame(raw_obs)
         return out
 
     def step(self, actions):
         # print(f"Stepping env with actions: {actions}")
         out = self.vec_env.step(actions)
-        self._capture_frame()
+        raw_obs = out[0] if isinstance(out, tuple) and len(out) > 0 else out
+        self._capture_frame(raw_obs)
         return out
 
     def save_video(self):
-        if not self.enabled or not self.frames or self.output_path is None:
+        if not self.enabled or self.output_path is None:
+            return
+        if self._episode_started and self.frames:
+            self.episode_frames.append(self.frames)
+            self.frames = []
+            self._episode_started = False
+        if not self.episode_frames:
             return
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        frames = [np.ascontiguousarray(np.asarray(frame), dtype=np.uint8) for frame in self.frames]
-        if media is None:
-            raise RuntimeError("mediapy is required to save dynamic videos")
-        media.write_video(str(self.output_path), frames, fps=self.fps)
+        stem = self.output_path.stem
+        suffix = self.output_path.suffix or ".mp4"
+        for episode_idx, episode_frames in enumerate(self.episode_frames):
+            frames = [np.ascontiguousarray(np.asarray(frame), dtype=np.uint8) for frame in episode_frames]
+            episode_path = self.output_path.parent / f"{stem}_ep{episode_idx:03d}{suffix}"
+            media.write_video(str(episode_path), frames, fps=self.fps)
+        self.episode_frames = []
 
     def __getattr__(self, name):
         return getattr(self.vec_env, name)
@@ -239,16 +276,22 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
 
         env_args = {
             "bddl_file_name": cfg.dynamic_bddl_file,
+            "control_freq": int(round(cfg.target_control_hz)),
             "camera_heights": self.observation_height,
             "camera_widths": self.observation_width,
+            "camera_depths": True,
             "moving_object_name": cfg.dynamic_moving_object_name,
+            "motion_trajectory": cfg.dynamic_motion_trajectory,
             "motion_axis": cfg.dynamic_motion_axis,
             "motion_path": cfg.dynamic_motion_path,
+            "motion_drive_type": cfg.dynamic_motion_drive_type,
             "motion_secondary_axis": cfg.dynamic_motion_secondary_axis,
             "motion_turn_direction": cfg.dynamic_motion_turn_direction,
             "motion_turn_step": cfg.dynamic_motion_turn_step,
             "motion_turn_cycles": cfg.dynamic_motion_turn_cycles,
             "motion_initial_speed": cfg.dynamic_motion_initial_speed,
+            "motion_drive_mode": cfg.dynamic_motion_drive_mode,
+            "motion_speed_profile": cfg.dynamic_motion_speed_profile,
             "motion_surface_friction_scale": cfg.dynamic_motion_surface_friction_scale,
             "motion_settle_steps": cfg.dynamic_motion_settle_steps,
             "motion_drive_steps": cfg.dynamic_motion_drive_steps,
@@ -258,11 +301,17 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
             "motion_friction_scale": cfg.dynamic_motion_friction_scale,
             "motion_friction_restore_step": cfg.dynamic_motion_friction_restore_step,
             "motion_object_resistance_scale": cfg.dynamic_motion_object_resistance_scale,
-            "motion_post_restore_velocity_decay": cfg.dynamic_motion_post_restore_velocity_decay,
+            "motion_velocity_decay": cfg.dynamic_motion_velocity_decay,
             "motion_return_enabled": cfg.dynamic_motion_return_enabled,
+            "motion_stop_on_gripper_contact": cfg.dynamic_motion_stop_on_gripper_contact,
             "motion_amplitude": cfg.dynamic_motion_amplitude,
             "motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
         }
+        logging.info(
+            "Creating dynamic LIBERO env with control_freq=%s (from target_control_hz=%s)",
+            env_args["control_freq"],
+            cfg.target_control_hz,
+        )
         env = OffScreenRenderEnv(**env_args)
         env.reset()
         return env
@@ -276,6 +325,7 @@ def patch_dynamic_libero_env(cfg: VLASHDynamicLiberoEvalConfig):
 
 @parser.wrap()
 def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
+    # 这里得到的policy是norm类已经从checkpoint加载好的，后续可以用yaml覆盖
     init_logging()
     _configure_component_log_levels(cfg)
     _apply_dynamic_task_registry(cfg)
@@ -289,40 +339,10 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
     raw_default_cfg = _load_default_eval_yaml(cfg)
     train_cfg = _resolve_train_cfg(cfg, raw_default_cfg)
     cfg.policy = _resolve_policy(cfg, raw_default_cfg)
+    logging.info(f"Policy normalization mapping: {cfg.policy.normalization_mapping}")
     cfg.train_cfg = train_cfg
 
     _log_effective_eval_setup(cfg)
-    logging.info("Dynamic Env Setup")
-    logging.info(f"Dynamic BDDL: {cfg.dynamic_bddl_file}")
-    logging.info(f"Dynamic task description: {cfg.dynamic_task_description}")
-    logging.info(f"Dynamic task name: {cfg.dynamic_task_name}")
-    logging.info(f"Dynamic task registry: {cfg.dynamic_task_registry}")
-    logging.info(f"Dynamic shell task id: {cfg.dynamic_shell_task_id}")
-    logging.info(f"Dynamic use init states: {cfg.dynamic_use_init_states}")
-    logging.info(f"Dynamic moving object: {cfg.dynamic_moving_object_name}")
-    logging.info(f"Dynamic motion axis: {cfg.dynamic_motion_axis}")
-    logging.info(f"Dynamic motion path: {cfg.dynamic_motion_path}")
-    logging.info(f"Dynamic motion secondary axis: {cfg.dynamic_motion_secondary_axis}")
-    logging.info(f"Dynamic motion turn direction: {cfg.dynamic_motion_turn_direction}")
-    logging.info(f"Dynamic motion turn step: {cfg.dynamic_motion_turn_step}")
-    logging.info(f"Dynamic motion turn cycles: {cfg.dynamic_motion_turn_cycles}")
-    logging.info(f"Dynamic motion initial speed: {cfg.dynamic_motion_initial_speed}")
-    logging.info(f"Dynamic motion surface friction scale: {cfg.dynamic_motion_surface_friction_scale}")
-    logging.info(f"Dynamic motion settle steps: {cfg.dynamic_motion_settle_steps}")
-    logging.info(f"Dynamic motion drive steps: {cfg.dynamic_motion_drive_steps}")
-    logging.info(f"Dynamic motion drive speed: {cfg.dynamic_motion_drive_speed}")
-    logging.info(f"Dynamic motion secondary speed: {cfg.dynamic_motion_secondary_speed}")
-    logging.info(f"Dynamic motion end speed: {cfg.dynamic_motion_end_speed}")
-    logging.info(f"Dynamic motion friction scale: {cfg.dynamic_motion_friction_scale}")
-    logging.info(f"Dynamic motion friction restore step: {cfg.dynamic_motion_friction_restore_step}")
-    logging.info(f"Dynamic object resistance scale: {cfg.dynamic_motion_object_resistance_scale}")
-    logging.info(f"Dynamic post-restore velocity decay: {cfg.dynamic_motion_post_restore_velocity_decay}")
-    logging.info(f"Dynamic motion return enabled: {cfg.dynamic_motion_return_enabled}")
-    logging.info(f"Dynamic motion amplitude: {cfg.dynamic_motion_amplitude}")
-    logging.info(f"Dynamic motion frequency hz: {cfg.dynamic_motion_frequency_hz}")
-    logging.info(f"Dynamic save video: {cfg.dynamic_save_video}")
-    logging.info(f"Dynamic video dir: {cfg.dynamic_video_dir or (Path(cfg.output_dir) / 'dynamic_videos')}")
-    logging.info("=" * 50)
 
     dataset = make_vlash_dataset(train_cfg)
     policy_cls = get_policy_class(cfg.policy.type)
@@ -332,12 +352,15 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
         dataset_stats=dataset.meta.stats,
     )
     policy.eval()
+    logging.info(f"Policy normalization mapping after loading: {policy.config.normalization_mapping}")
 
     dynamic_task_ids = cfg.task_ids if cfg.task_ids is not None else [cfg.dynamic_shell_task_id]
     env_cfg = LiberoEnv(
         task=cfg.env_task,
         task_ids=dynamic_task_ids,
         init_states=cfg.dynamic_use_init_states,
+        episode_length=cfg.episode_length,
+        obs_type="pixels_depth_agent_pos",
     )
 
     logging.info(f"Initializing all tasks for {cfg.env_task}...")
@@ -364,6 +387,11 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
                     enabled=cfg.dynamic_save_video,
                     output_path=video_dir / f"{task_name}.mp4",
                     fps=cfg.dynamic_video_fps,
+                )
+                logging.info(
+                    "Dynamic video fps aligned to control frequency: video_fps=%s target_control_hz=%s",
+                    cfg.dynamic_video_fps,
+                    cfg.target_control_hz,
                 )
 
                 task_info = eval_single_vec_env(
@@ -429,13 +457,17 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
             "dynamic_shell_task_id": cfg.dynamic_shell_task_id,
             "dynamic_use_init_states": cfg.dynamic_use_init_states,
             "dynamic_moving_object_name": cfg.dynamic_moving_object_name,
+            "dynamic_motion_trajectory": cfg.dynamic_motion_trajectory,
             "dynamic_motion_axis": cfg.dynamic_motion_axis,
             "dynamic_motion_path": cfg.dynamic_motion_path,
+            "dynamic_motion_drive_type": cfg.dynamic_motion_drive_type,
             "dynamic_motion_secondary_axis": cfg.dynamic_motion_secondary_axis,
             "dynamic_motion_turn_direction": cfg.dynamic_motion_turn_direction,
             "dynamic_motion_turn_step": cfg.dynamic_motion_turn_step,
             "dynamic_motion_turn_cycles": cfg.dynamic_motion_turn_cycles,
             "dynamic_motion_initial_speed": cfg.dynamic_motion_initial_speed,
+            "dynamic_motion_drive_mode": cfg.dynamic_motion_drive_mode,
+            "dynamic_motion_speed_profile": cfg.dynamic_motion_speed_profile,
             "dynamic_motion_surface_friction_scale": cfg.dynamic_motion_surface_friction_scale,
             "dynamic_motion_settle_steps": cfg.dynamic_motion_settle_steps,
             "dynamic_motion_drive_steps": cfg.dynamic_motion_drive_steps,
@@ -445,8 +477,9 @@ def run_benchmark(cfg: VLASHDynamicLiberoEvalConfig):
             "dynamic_motion_friction_scale": cfg.dynamic_motion_friction_scale,
             "dynamic_motion_friction_restore_step": cfg.dynamic_motion_friction_restore_step,
             "dynamic_motion_object_resistance_scale": cfg.dynamic_motion_object_resistance_scale,
-            "dynamic_motion_post_restore_velocity_decay": cfg.dynamic_motion_post_restore_velocity_decay,
+            "dynamic_motion_velocity_decay": cfg.dynamic_motion_velocity_decay,
             "dynamic_motion_return_enabled": cfg.dynamic_motion_return_enabled,
+            "dynamic_motion_stop_on_gripper_contact": cfg.dynamic_motion_stop_on_gripper_contact,
             "dynamic_motion_amplitude": cfg.dynamic_motion_amplitude,
             "dynamic_motion_frequency_hz": cfg.dynamic_motion_frequency_hz,
             "dynamic_save_video": cfg.dynamic_save_video,

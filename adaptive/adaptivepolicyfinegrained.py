@@ -4,7 +4,7 @@ import numpy as np
 import math
 import logging
 from typing import List, Tuple, Dict, Optional
-from .object_extractor.mock_extractor import extract_objects
+from .object_extractor.mock_extractor import extract_object_roles, extract_objects
 # from object_extractor.mock_extractor import extract_objects
 
 # Grounding DINO imports
@@ -12,6 +12,15 @@ import sys
 sys.path.append('/pub/data/wangzb/GroundingDINO')
 from groundingdino.util.inference import load_model, load_image, predict, annotate
 import cv2
+
+
+def _instruction_role_info(instruction: str) -> Dict[str, List[str]]:
+    role_info = extract_object_roles(instruction)
+    return {
+        "target_object": list(role_info.get("all_objects", [])),
+        "tograsp_objects": list(role_info.get("tograsp", [])),
+        "reference_objects": list(role_info.get("reference", [])),
+    }
 
 # ==============================================================================
 # 2. Vision & Math Module: Uncertainty Calculation (Value Function)
@@ -375,7 +384,13 @@ class AdaptiveActionChunker:
     def enqueue_history(self, history_action):
         """将历史记录添加到队列中"""
         if history_action is not None:
-            self.action_history.append(history_action)
+            action = np.asarray(history_action, dtype=np.float32)
+            if action.ndim == 0:
+                return
+            action = action.reshape(-1)
+            if action.size == 0:
+                return
+            self.action_history.append(action.tolist())
     
     def compute_continuity(self):
         continuity_info = self.compute_continuity_info()
@@ -432,7 +447,7 @@ class AdaptiveActionChunker:
                 level = "very_low"
                 label = f"Very low continuity: {continuity:.4f}, gripper_changed: {gripper_changed}, prev_continuity: {prev_cont}"
 
-            continuity_info["level"] = level
+            continuity_info["level"] = level #md没看清把他删了结果出问题了
             continuity_info["label"] = label
             # logging.info(
             #     "continuity: %.4f, level: %s, gripper_changed: %s, prev_continuity: %s, delta: %s",
@@ -510,8 +525,9 @@ class AdaptiveActionChunker:
         local_needs_interruption = False
 
         # 1. 解析指令，获取 DINO 的 Prompt
+        role_info = _instruction_role_info(instruction)
         if parsed_objs is None:
-            parsed_objs = extract_objects(instruction)
+            parsed_objs = role_info["target_object"]
         if not parsed_objs:
             # 如果解析失败，保守策略
             return {
@@ -541,6 +557,8 @@ class AdaptiveActionChunker:
         # 3. 计算指标
         info_dict = {
             "target_object": parsed_objs,
+            "tograsp_objects": role_info["tograsp_objects"],
+            "reference_objects": role_info["reference_objects"],
             "dino_boxes": boxes.tolist()
         }
         if phrases:
@@ -684,7 +702,8 @@ class AdaptiveActionChunker:
                 info_dict: 包含计算信息的字典
         """
         # 1. 解析指令，获取 DINO 的 Prompt
-        parsed_objs = extract_objects(instruction)
+        role_info = _instruction_role_info(instruction)
+        parsed_objs = role_info["target_object"]
         
         if not parsed_objs:
             # 如果解析失败，保守策略
@@ -697,6 +716,8 @@ class AdaptiveActionChunker:
         # 3. 初始化信息字典
         info_dict = {
             "target_object": parsed_objs,
+            "tograsp_objects": role_info["tograsp_objects"],
+            "reference_objects": role_info["reference_objects"],
             "dino_boxes": (
                 boxes_xyxy.tolist()
                 if isinstance(boxes_xyxy, torch.Tensor)
@@ -718,36 +739,7 @@ class AdaptiveActionChunker:
                 factors.append("Multiple objects detected")
         elif hasattr(self, "trackers"):
             info_dict["tracker_state"] = "missing"
-        
-        
-        # 4.2 基于机器人状态的启发式
-        if robot_state:
-            # 末端执行器与目标的距离：距离越近，需要更频繁的决策
-            if "ee_position" in robot_state and len(boxes) > 0:
-                # 计算末端执行器与最近目标的距离
-                ee_pos = np.array(robot_state["ee_position"])
-                min_distance = float('inf')
-                for box in boxes:
-                    # 假设box是 [cx, cy, w, h] 归一化坐标
-                    box_center = np.array([box[0], box[1]])
-                    distance = np.linalg.norm(ee_pos[:2] - box_center)
-                    if distance < min_distance:
-                        min_distance = distance
                 
-                info_dict["min_object_distance"] = min_distance
-                if min_distance < 0.1:  # 距离阈值，可调整
-                    factors.append("Close to object (grasping phase)")
-        
-        
-        # if factors:
-        #     # 根据因子数量调整降低幅度
-        #     factor_count = len(factors)
-        #     logging.info(f"factor_count: {factor_count} factors: {factors}")
-        #     reduction_factor = max(0.4, 1.0 - factor_count * 0.3)  # 最多降低60%
-        #     self.current_horizon = max(self.min_h, int(prev_h * reduction_factor))
-        #     reason = "; ".join(factors)
-        # 5. 基于启发式因子调整horizon
-        
         local_needs_interruption = False
         prev_h = self.current_horizon if current_horizon is None else current_horizon
         continuity_info = self.compute_continuity_info()

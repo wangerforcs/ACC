@@ -58,7 +58,7 @@ DEFAULT_EXTRA_FOLDERS = [
     "power_runs_compiled_valuefuncsync",
     "power-runs_nocompiled_valuefuncasync",
     "power-runs_nocompiled_valuefuncsync",
-    "vlash"
+    # "vlash"
     # 例子：
     # "configs",
     # "tools",

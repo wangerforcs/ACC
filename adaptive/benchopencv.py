@@ -1,6 +1,8 @@
 import argparse
+import dataclasses
 import statistics
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
@@ -10,8 +12,16 @@ import numpy as np
 BBox = Tuple[int, int, int, int]
 
 
+@dataclasses.dataclass(frozen=True)
+class TrackerSpec:
+    display_name: str
+    namespace: str
+    class_name: str
+    create_name: str
+    factory: Callable[[], object]
+
+
 def percentile(values: List[float], q: float) -> float:
-    """Return percentile in milliseconds."""
     if not values:
         return float("nan")
     if len(values) == 1:
@@ -30,56 +40,60 @@ def now_ms() -> float:
     return time.perf_counter_ns() / 1e6
 
 
-def get_tracker_factory(name: str) -> Optional[Callable[[], object]]:
-    """
-    Return a callable that creates the requested tracker.
-    Supports both cv2 and cv2.legacy namespaces.
-    """
-    name = name.upper()
+def _normalize_tracker_base_name(name: str) -> str:
+    if name.endswith("_create"):
+        name = name[: -len("_create")]
+    if name.startswith("Tracker"):
+        name = name[len("Tracker") :]
+    return name
 
-    candidates = {
-        "BOOSTING": ["TrackerBoosting_create"],
-        "MIL": ["TrackerMIL_create"],
-        "KCF": ["TrackerKCF_create"],
-        "TLD": ["TrackerTLD_create"],
-        "MEDIANFLOW": ["TrackerMedianFlow_create"],
-        "GOTURN": ["TrackerGOTURN_create"],
-        "MOSSE": ["TrackerMOSSE_create"],
-        "CSRT": ["TrackerCSRT_create"],
-    }
 
-    if name not in candidates:
-        return None
+def discover_tracker_specs() -> List[TrackerSpec]:
+    specs: list[TrackerSpec] = []
+    seen: set[tuple[str, str]] = set()
 
-    namespaces = [cv2]
-    if hasattr(cv2, "legacy"):
-        namespaces.append(cv2.legacy)
+    namespaces: list[tuple[str, object]] = [("cv2", cv2)]
+    legacy = getattr(cv2, "legacy", None)
+    if legacy is not None:
+        namespaces.append(("cv2.legacy", legacy))
 
-    for ns in namespaces:
-        for attr in candidates[name]:
-            if hasattr(ns, attr):
-                fn = getattr(ns, attr)
-                return fn
+    for namespace_name, namespace in namespaces:
+        for attr_name in sorted(dir(namespace)):
+            if not attr_name.startswith("Tracker") or not attr_name.endswith("_create"):
+                continue
+            factory = getattr(namespace, attr_name)
+            if not callable(factory):
+                continue
+            base_name = _normalize_tracker_base_name(attr_name)
+            dedupe_key = (namespace_name, base_name.upper())
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            specs.append(
+                TrackerSpec(
+                    display_name=f"{namespace_name}:{base_name}",
+                    namespace=namespace_name,
+                    class_name=f"Tracker{base_name}",
+                    create_name=attr_name,
+                    factory=factory,
+                )
+            )
+    return specs
+
+
+def get_tracker_spec(name: str) -> Optional[TrackerSpec]:
+    normalized = name.strip().lower()
+    specs = discover_tracker_specs()
+
+    for spec in specs:
+        if spec.display_name.lower() == normalized:
+            return spec
+
+    for spec in specs:
+        if spec.display_name.split(":", 1)[1].lower() == normalized:
+            return spec
 
     return None
-
-
-def list_available_trackers() -> List[str]:
-    tracker_names = [
-        "BOOSTING",
-        "MIL",
-        "KCF",
-        "TLD",
-        "MEDIANFLOW",
-        "GOTURN",
-        "MOSSE",
-        "CSRT",
-    ]
-    available = []
-    for name in tracker_names:
-        if get_tracker_factory(name) is not None:
-            available.append(name)
-    return available
 
 
 def generate_random_frame(
@@ -88,7 +102,6 @@ def generate_random_frame(
     channels: int = 3,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
-    """Generate a random uint8 image."""
     if rng is None:
         rng = np.random.default_rng()
     return rng.integers(0, 256, size=(height, width, channels), dtype=np.uint8)
@@ -101,7 +114,6 @@ def move_bbox_randomly(
     max_shift: int,
     rng: np.random.Generator,
 ) -> BBox:
-    """Move bbox a little while keeping it inside the frame."""
     x, y, w, h = bbox
     dx = int(rng.integers(-max_shift, max_shift + 1))
     dy = int(rng.integers(-max_shift, max_shift + 1))
@@ -122,8 +134,46 @@ def create_initial_bbox(
     return x, y, box_w, box_h
 
 
+def require_file(path: Path) -> str:
+    if not path.is_file():
+        raise FileNotFoundError(f"missing model file: {path}")
+    return str(path)
+
+
+def create_tracker_with_models(spec, models_dir: Path):
+    short_name = spec.display_name.split(":", 1)[1].lower()
+
+    if short_name == "dasiamrpn":
+        # OpenCV 4.13 Python 绑定里，更稳的是用 Params
+        p = cv2.TrackerDaSiamRPN_Params()
+        p.model = require_file(models_dir / "dasiamrpn_model.onnx")
+        p.kernel_cls1 = require_file(models_dir / "dasiamrpn_kernel_cls1.onnx")
+        p.kernel_r1 = require_file(models_dir / "dasiamrpn_kernel_r1.onnx")
+        return cv2.TrackerDaSiamRPN_create(p)
+
+    if short_name == "goturn":
+        p = cv2.TrackerGOTURN_Params()
+        p.modelTxt = require_file(models_dir / "goturn.prototxt")
+        p.modelBin = require_file(models_dir / "goturn.caffemodel")
+        return cv2.TrackerGOTURN_create(p)
+
+    if short_name == "nano":
+        p = cv2.TrackerNano_Params()
+        p.backbone = require_file(models_dir / "nanotrack_backbone_sim.onnx")
+        p.neckhead = require_file(models_dir / "nanotrack_head_sim.onnx")
+        return cv2.TrackerNano_create(p)
+
+    if short_name == "vit":
+        p = cv2.TrackerVit_Params()
+        p.net = require_file(models_dir / "object_tracking_vittrack_2023sep.onnx")
+        return cv2.TrackerVit_create(p)
+
+    return spec.factory()
+
+
 def benchmark_tracker(
     tracker_name: str,
+    models_dir: Path,
     num_trials: int,
     frames_per_trial: int,
     width: int,
@@ -134,16 +184,8 @@ def benchmark_tracker(
     seed: int,
     warmup_trials: int = 2,
 ) -> Dict[str, float]:
-    """
-    Benchmark one tracker with synthetic random frames.
-
-    For each trial:
-      1) create tracker
-      2) init on first random frame + bbox
-      3) update across N-1 random frames
-    """
-    factory = get_tracker_factory(tracker_name)
-    if factory is None:
+    spec = get_tracker_spec(tracker_name)
+    if spec is None:
         raise RuntimeError(f"Tracker {tracker_name} is not available in this OpenCV build.")
 
     rng = np.random.default_rng(seed)
@@ -159,16 +201,14 @@ def benchmark_tracker(
         frame0 = generate_random_frame(height, width, rng=rng)
         bbox = create_initial_bbox(width, height, box_w, box_h)
 
-        tracker = factory()
+        tracker = create_tracker_with_models(spec, models_dir)
 
         t0 = now_ms()
         ok = tracker.init(frame0, bbox)
         t1 = now_ms()
 
-        # Some tracker implementations return None instead of bool.
         init_ok = True if ok is None else bool(ok)
 
-        # warmup阶段不统计
         if trial_idx >= warmup_trials:
             init_latencies_ms.append(t1 - t0)
 
@@ -196,7 +236,7 @@ def benchmark_tracker(
     if not init_latencies_ms or not update_latencies_ms:
         raise RuntimeError(
             f"Tracker {tracker_name} did not produce usable benchmark results. "
-            f"(Possible unsupported model/dependency issue, e.g. GOTURN.)"
+            f"(Possible unsupported model/dependency issue.)"
         )
 
     mean_update = statistics.mean(update_latencies_ms)
@@ -204,6 +244,8 @@ def benchmark_tracker(
 
     return {
         "tracker": tracker_name,
+        "namespace": spec.namespace,
+        "create_name": spec.create_name,
         "init_mean_ms": statistics.mean(init_latencies_ms),
         "init_p50_ms": percentile(init_latencies_ms, 0.50),
         "init_p95_ms": percentile(init_latencies_ms, 0.95),
@@ -225,6 +267,7 @@ def print_results(results: List[Dict[str, float]]) -> None:
 
     headers = [
         "tracker",
+        "namespace",
         "init_mean_ms",
         "init_p95_ms",
         "update_mean_ms",
@@ -240,6 +283,7 @@ def print_results(results: List[Dict[str, float]]) -> None:
     for r in results:
         rows.append([
             str(r["tracker"]),
+            str(r.get("namespace", "")),
             f"{r['init_mean_ms']:.3f}",
             f"{r['init_p95_ms']:.3f}",
             f"{r['update_mean_ms']:.3f}",
@@ -270,9 +314,10 @@ def main() -> None:
     parser.add_argument(
         "--trackers",
         nargs="+",
-        default=["MOSSE", "KCF", "MIL", "MEDIANFLOW", "CSRT"],
-        help="Trackers to test, e.g. MOSSE KCF MIL CSRT",
+        default=["all"],
+        help="Trackers to test. Use names like CSRT or cv2.legacy:CSRT. Default: all discovered trackers.",
     )
+    parser.add_argument("--models-dir", type=Path, default=Path(__file__).resolve().parent.parent / "models")
     parser.add_argument("--width", type=int, default=1280, help="Frame width")
     parser.add_argument("--height", type=int, default=720, help="Frame height")
     parser.add_argument("--box-w", type=int, default=120, help="Initial bounding box width")
@@ -284,20 +329,30 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234, help="Random seed")
     args = parser.parse_args()
 
-    available = list_available_trackers()
-    print("Available trackers in this OpenCV build:", available)
+    specs = discover_tracker_specs()
+    available = [spec.display_name for spec in specs]
+    print("Available trackers in this OpenCV build:")
+    for spec in specs:
+        print(f"  - {spec.display_name} ({spec.create_name})")
     print()
+    print(f"Using models directory: {args.models_dir}\n")
+
+    requested_trackers = args.trackers
+    if len(requested_trackers) == 1 and requested_trackers[0].lower() == "all":
+        requested_trackers = available
 
     results = []
-    for tracker_name in args.trackers:
-        if tracker_name.upper() not in available:
+    for tracker_name in requested_trackers:
+        spec = get_tracker_spec(tracker_name)
+        if spec is None:
             print(f"[SKIP] {tracker_name}: not available in this OpenCV build.")
             continue
 
-        print(f"[RUN ] {tracker_name} ...")
+        print(f"[RUN ] {spec.display_name} ...")
         try:
             result = benchmark_tracker(
-                tracker_name=tracker_name,
+                tracker_name=spec.display_name,
+                models_dir=args.models_dir,
                 num_trials=args.trials,
                 frames_per_trial=args.frames_per_trial,
                 width=args.width,
@@ -315,7 +370,7 @@ def main() -> None:
                 f"fps≈{result['fps_equiv']:.1f}"
             )
         except Exception as e:
-            print(f"[FAIL] {tracker_name}: {e}")
+            print(f"[FAIL] {spec.display_name}: {e}")
 
     print("\n=== Summary ===")
     results.sort(key=lambda x: x["update_mean_ms"])

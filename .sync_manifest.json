@@ -30,13 +30,12 @@
     "power_runs_compiled_valuefuncasync",
     "power_runs_compiled_valuefuncsync",
     "power-runs_nocompiled_valuefuncasync",
-    "power-runs_nocompiled_valuefuncsync",
-    "vlash"
+    "power-runs_nocompiled_valuefuncsync"
   ],
-  "adaptive_file_count": 35,
+  "adaptive_file_count": 61,
   "top_level_file_count": 20,
   "modified_libero_file_count": 10,
-  "extra_folder_file_count": 362,
+  "extra_folder_file_count": 303,
   "copied": [
     {
       "path": "LIBERO/libero/libero/bddl_files/libero_dynamic_examples/test_dynamic_example.bddl",
@@ -72,11 +71,11 @@
     },
     {
       "path": "LIBERO/modified_libero_files.txt",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/scripts/create_dynamic_libero_bddl_example.py",
-      "changed": true
+      "changed": false
     },
     {
       "path": "LIBERO/scripts/render_dynamic_libero_example.py",
@@ -108,7 +107,7 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_sam2.py",
@@ -136,23 +135,67 @@
     },
     {
       "path": "adaptive/adaptivepolicyfinegrained_tracker_scoregate.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/benchopencv.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/benchsam2.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/export_suite_tracking_videos.py",
+      "changed": false
+    },
+    {
+      "path": "adaptive/export_testvideo_all_backends.py",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fuck.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/export_manifest.json",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/fuck_cv2.legacy_boosting.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/fuck_cv2.legacy_csrt.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/fuck_cv2_csrt.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/fuck_cv2_dasiamrpn.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/fucktests/fuck_cv2_nano.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/goodtrackers/testvideo_cv2_dasiamrpn.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/goodtrackers/testvideo_cv2_nano.mp4",
       "changed": true
     },
     {
       "path": "adaptive/monitor.py",
       "changed": false
+    },
+    {
+      "path": "adaptive/motion_estimators.py",
+      "changed": true
     },
     {
       "path": "adaptive/object_extractor/extractor.py",
@@ -180,7 +223,7 @@
     },
     {
       "path": "adaptive/object_extractor/test_mock_extractor.py",
-      "changed": false
+      "changed": true
     },
     {
       "path": "adaptive/tests/test_box_to_token_mask.py",
@@ -219,8 +262,68 @@
       "changed": false
     },
     {
+      "path": "adaptive/testvideo.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/export_manifest.json",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_boosting.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_csrt.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_kcf.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_medianflow.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_mil.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_mosse.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_tld.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2_csrt.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2_goturn.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2_kcf.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2_mil.mp4",
+      "changed": true
+    },
+    {
+      "path": "adaptive/testvideo_tracking_exports/testvideo_cv2_vit.mp4",
+      "changed": true
+    },
+    {
       "path": "adaptive/tracker_scoregate_defaults.yaml",
       "changed": false
+    },
+    {
+      "path": "adaptive/tracker_utils.py",
+      "changed": true
     },
     {
       "path": "computeflops/compute_dino.py",
@@ -1509,242 +1612,6 @@
     {
       "path": "visualutils.py",
       "changed": false
-    },
-    {
-      "path": "vlash/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/__pycache__/__init__.cpython-313.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/__pycache__/train.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/cli.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__pycache__/__init__.cpython-313.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__pycache__/run_config.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__pycache__/run_config.cpython-313.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/__pycache__/train_config.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/run_config.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/configs/train_config.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/__pycache__/compat.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/__pycache__/vlash_dataset.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/compat.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/datasets/vlash_dataset.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/__pycache__/attention.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/__pycache__/linear.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/__pycache__/rope.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/attention.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/linear.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/layers/rope.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__pycache__/apply.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__pycache__/checkpoint.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__pycache__/logging.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/__pycache__/qlora.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/apply.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/checkpoint.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/logging.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/lora/qlora.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/__pycache__/factory.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/__pycache__/normalize.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/factory.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/normalize.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/__pycache__/configuration_pi0.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/__pycache__/modeling_pi0.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/__pycache__/utils.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/configuration_pi0.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/modeling_pi0.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi0/utils.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/__init__.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/__pycache__/__init__.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/__pycache__/configuration_pi05.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/__pycache__/modeling_pi05.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/__pycache__/utils.cpython-310.pyc",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/configuration_pi05.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/modeling_pi05.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/policies/pi05/utils.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/run.py",
-      "changed": true
-    },
-    {
-      "path": "vlash/train.py",
-      "changed": true
     }
   ],
   "removed": [],

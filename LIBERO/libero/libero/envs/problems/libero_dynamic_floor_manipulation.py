@@ -24,13 +24,17 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         bddl_file_name,
         *args,
         moving_object_name=None,
+        motion_trajectory=None,
         motion_axis="x",
         motion_path="line",
+        motion_drive_type=None,
         motion_secondary_axis=None,
         motion_turn_direction="left",
         motion_turn_step=None,
         motion_turn_cycles=1,
         motion_initial_speed=None,
+        motion_drive_mode="velocity",
+        motion_speed_profile=None,
         motion_surface_friction_scale=None,
         motion_settle_steps=15,
         motion_drive_steps=30,
@@ -42,15 +46,16 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         motion_friction_scale=0.15,
         motion_friction_restore_step=None,
         motion_object_resistance_scale=None,
-        motion_post_restore_velocity_decay=0.97,
+        motion_velocity_decay=None,
         motion_amplitude=0.15,
         motion_frequency_hz=0.01,
+        motion_stop_on_gripper_contact=False,
         motion_enabled=True,
         **kwargs,
     ):
         self.moving_object_name = moving_object_name
         self.motion_axis = motion_axis
-        self.motion_path = str(motion_path).lower()
+        self.motion_path = self._normalize_motion_trajectory(motion_trajectory or motion_path)
         self.motion_secondary_axis = motion_secondary_axis
         self.motion_turn_direction = str(motion_turn_direction).lower()
         self.motion_turn_step = None if motion_turn_step is None else max(0, int(motion_turn_step))
@@ -61,6 +66,8 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         if motion_initial_speed is None:
             motion_initial_speed = 2.0 * np.pi * float(motion_frequency_hz) * float(motion_amplitude)
         self.motion_initial_speed = float(motion_initial_speed)
+        self.motion_drive_mode = self._normalize_motion_drive_type(motion_drive_type or motion_drive_mode)
+        self.motion_speed_profile = self._normalize_motion_speed_profile(motion_speed_profile)
         self.motion_surface_friction_scale = (
             None if motion_surface_friction_scale is None else float(motion_surface_friction_scale)
         )
@@ -80,9 +87,12 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         self.motion_object_resistance_scale = (
             None if motion_object_resistance_scale is None else float(motion_object_resistance_scale)
         )
-        self.motion_post_restore_velocity_decay = float(motion_post_restore_velocity_decay)
+        self.motion_velocity_decay = (
+            None if motion_velocity_decay is None else float(motion_velocity_decay)
+        )
         self.motion_amplitude = float(motion_amplitude)
         self.motion_frequency_hz = float(motion_frequency_hz)
+        self.motion_stop_on_gripper_contact = bool(motion_stop_on_gripper_contact)
         self.motion_enabled = bool(motion_enabled)
 
         self._motion_joint_name = None
@@ -108,6 +118,79 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         self._slide_velocity_secondary = 0.0
         self._return_direction = 1.0
         super().__init__(bddl_file_name, *args, **kwargs)
+
+    @staticmethod
+    def _normalize_motion_trajectory(trajectory):
+        value = str(trajectory or "line").lower()
+        aliases = {
+            "straight": "line",
+            "line": "line",
+            "diagonal": "diagonal",
+            "corner": "right_angle",
+            "right_angle": "right_angle",
+            "curve": "curve",
+            "curved": "curve",
+        }
+        return aliases.get(value, value)
+
+    @staticmethod
+    def _normalize_motion_drive_type(drive_type):
+        value = str(drive_type or "velocity").lower()
+        aliases = {
+            "position": "position",
+            "qpos": "position",
+            "velocity": "velocity",
+            "qvel": "velocity",
+            "physics": "physics",
+            "physical": "physics",
+        }
+        return aliases.get(value, value)
+
+    @staticmethod
+    def _normalize_motion_speed_profile(speed_profile):
+        if speed_profile is None:
+            return None
+        value = str(speed_profile).lower()
+        aliases = {
+            "constant": "constant",
+            "const": "constant",
+            "fixed": "constant",
+            "decay": "decay",
+            "damped": "decay",
+        }
+        return aliases.get(value, value)
+
+    def _uses_physics_only_drive(self) -> bool:
+        if self.motion_drive_mode == "physics":
+            return True
+        return (
+            abs(float(self.motion_initial_speed)) > 1e-8
+            and abs(float(self.motion_drive_speed)) < 1e-8
+            and abs(float(self.motion_secondary_speed)) < 1e-8
+        )
+
+    def _script_decay_factor(self) -> float:
+        if self.motion_speed_profile == "constant":
+            return 1.0
+        if self.motion_speed_profile == "decay":
+            return float(self.motion_velocity_decay) if self.motion_velocity_decay is not None else 0.96
+        return float(self.motion_velocity_decay) if self.motion_velocity_decay is not None else 1.0
+
+    def _restart_scripted_motion(self):
+        start_speed = float(self.motion_drive_speed)
+        if abs(start_speed) < 1e-8:
+            start_speed = float(self.motion_initial_speed)
+        self._slide_velocity_primary = self._return_direction * start_speed
+        self._slide_velocity_secondary = float(self.motion_secondary_speed)
+        self._drive_step_idx = 0
+
+    def _curve_secondary_velocity(self) -> float:
+        period_steps = max(8, self.motion_drive_steps if self.motion_drive_steps > 0 else 60)
+        phase = 2.0 * np.pi * (self._drive_step_idx % period_steps) / float(period_steps)
+        secondary_mag = abs(float(self.motion_secondary_speed))
+        if secondary_mag < 1e-8:
+            secondary_mag = abs(float(self.motion_drive_speed))
+        return secondary_mag * np.cos(phase)
 
     def _reset_internal(self):
         super()._reset_internal()
@@ -214,11 +297,15 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             return
         self.sim.data.qvel[self._motion_qvel_slice] = 0.0
 
-    def _apply_post_restore_velocity_decay(self):
+    def _apply_velocity_decay(self):
         if self._motion_qvel_slice is None:
             return
+        if self.motion_velocity_decay is None:
+            return
         qvel = self.sim.data.qvel[self._motion_qvel_slice].copy()
-        decay = float(np.clip(self.motion_post_restore_velocity_decay, 0.0, 1.0))
+        decay = float(np.clip(self.motion_velocity_decay, 0.0, 1.0))
+        if decay >= 1.0:
+            return
         qvel[:3] *= decay
         if np.linalg.norm(qvel[:2]) < 1e-4:
             qvel[:2] = 0.0
@@ -241,6 +328,9 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             secondary_velocity = diagonal_sign * float(self._slide_velocity_secondary) * velocity_scale
             qvel[self._motion_axis_idx] = primary_velocity
             qvel[self._motion_secondary_axis_idx] = secondary_velocity
+        elif self.motion_path == "curve":
+            qvel[self._motion_axis_idx] = float(self._slide_velocity_primary) * velocity_scale
+            qvel[self._motion_secondary_axis_idx] = self._curve_secondary_velocity() * velocity_scale
         elif self.motion_path == "right_angle":
             segment_len = max(
                 1,
@@ -274,6 +364,57 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
 
         self.sim.data.qvel[self._motion_qvel_slice] = qvel
 
+    def _apply_position_driven_slide(self):
+        if self._motion_joint_name is None:
+            return
+        new_qpos = np.array(self.sim.data.get_joint_qpos(self._motion_joint_name), dtype=np.float64).copy()
+        control_freq = float(getattr(self, "control_freq", 20.0))
+        dt = 1.0 / max(control_freq, 1.0)
+
+        if self.motion_path == "diagonal":
+            diagonal_sign = -1.0 if self.motion_turn_direction == "right" else 1.0
+            new_qpos[self._motion_axis_idx] += float(self._slide_velocity_primary) * dt
+            new_qpos[self._motion_secondary_axis_idx] += (
+                diagonal_sign * float(self._slide_velocity_secondary) * dt
+            )
+        elif self.motion_path == "curve":
+            new_qpos[self._motion_axis_idx] += float(self._slide_velocity_primary) * dt
+            new_qpos[self._motion_secondary_axis_idx] += self._curve_secondary_velocity() * dt
+        elif self.motion_path == "right_angle":
+            segment_len = max(
+                1,
+                self.motion_turn_step if self.motion_turn_step is not None else max(1, self.motion_drive_steps // 2),
+            )
+            secondary_sign = -1.0 if self.motion_turn_direction == "right" else 1.0
+            if self.motion_turn_cycles == 1:
+                if self._drive_step_idx >= segment_len:
+                    new_qpos[self._motion_secondary_axis_idx] += (
+                        secondary_sign * float(self._slide_velocity_secondary) * dt
+                    )
+                else:
+                    new_qpos[self._motion_axis_idx] += float(self._slide_velocity_primary) * dt
+            else:
+                segment_idx = self._drive_step_idx // segment_len
+                phase = segment_idx % 4
+                if phase == 0:
+                    new_qpos[self._motion_axis_idx] += abs(float(self._slide_velocity_primary)) * dt
+                elif phase == 1:
+                    new_qpos[self._motion_secondary_axis_idx] += (
+                        secondary_sign * abs(float(self._slide_velocity_secondary)) * dt
+                    )
+                elif phase == 2:
+                    new_qpos[self._motion_axis_idx] -= abs(float(self._slide_velocity_primary)) * dt
+                else:
+                    new_qpos[self._motion_secondary_axis_idx] -= (
+                        secondary_sign * abs(float(self._slide_velocity_secondary)) * dt
+                    )
+        else:
+            new_qpos[self._motion_axis_idx] += float(self._slide_velocity_primary) * dt
+
+        self.sim.data.set_joint_qpos(self._motion_joint_name, new_qpos)
+        self._stop_motion()
+        self.sim.forward()
+
     def _inject_initial_velocity_to_physics(self):
         if self._motion_qvel_slice is None:
             return
@@ -293,6 +434,9 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             qvel[self._motion_secondary_axis_idx] = (
                 direction * diagonal_sign * secondary_mag * velocity_scale
             )
+        elif self.motion_path == "curve":
+            qvel[self._motion_axis_idx] = primary_velocity
+            qvel[self._motion_secondary_axis_idx] = self._curve_secondary_velocity() * velocity_scale
         else:
             qvel[self._motion_axis_idx] = primary_velocity
 
@@ -309,13 +453,18 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         if planar_speed > reverse_threshold:
             return False
         self._return_direction *= -1.0
+        if self.motion_path == "line":
+            # For line motion, a return should restart the scripted drive in the
+            # opposite direction. If we only inject a new physical velocity
+            # here, the next scripted update still sees a near-zero
+            # `_slide_velocity_primary` and immediately stops again, producing a
+            # jittery in-place reversal.
+            self._restart_scripted_motion()
         self._inject_initial_velocity_to_physics()
         return True
 
     def _apply_motion_friction_override(self):
         if self._motion_body_id is None:
-            return
-        if self.motion_friction_scale <= 0:
             return
         for geom_id in self._motion_geom_ids:
             base_friction = self._original_geom_friction.get(geom_id)
@@ -324,8 +473,12 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
                 self._original_geom_friction[geom_id] = base_friction.copy()
             friction = np.array(base_friction, dtype=np.float64)
             friction *= self.motion_friction_scale
-            # Keep a tiny positive floor to avoid pathological zero-friction contact.
-            friction = np.maximum(friction, np.array([1e-4, 1e-4, 1e-4], dtype=np.float64))
+            if self.motion_friction_scale > 0:
+                # Keep a tiny positive floor to avoid pathological contact only
+                # when we explicitly want non-zero scaled friction.
+                friction = np.maximum(friction, np.array([1e-4, 1e-4, 1e-4], dtype=np.float64))
+            else:
+                friction = np.array([0.0, 0.0, 0.0], dtype=np.float64)
             self.sim.model.geom_friction[geom_id] = friction
         self._friction_restored = False
 
@@ -395,15 +548,11 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         if self._motion_joint_name is None:
             return
         if drive_step_idx == 0 and abs(self._slide_velocity_primary) < 1e-8:
-            start_speed = float(self.motion_drive_speed)
-            if abs(start_speed) < 1e-8:
-                start_speed = float(self.motion_initial_speed)
-            self._slide_velocity_primary = start_speed
-            self._slide_velocity_secondary = float(self.motion_secondary_speed)
+            self._restart_scripted_motion()
 
         drive_limit = self.motion_drive_steps if self.motion_drive_steps > 0 else 12
         turn_step = self.motion_turn_step if self.motion_turn_step is not None else max(1, drive_limit // 2)
-        if self.motion_path == "diagonal":
+        if self.motion_path in {"diagonal", "curve"}:
             if abs(self._slide_velocity_primary) < 1e-8 and abs(self._slide_velocity_secondary) < 1e-8:
                 self._velocity_injected = True
                 self._stop_motion()
@@ -423,24 +572,51 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             self._stop_motion()
             return
 
-        # Drive the object by velocity rather than teleporting qpos. This lets
-        # MuJoCo contact dynamics carry other objects (for example cheese on a
-        # moving plate) instead of the support object sliding underneath them.
-        self._transfer_scripted_velocity_to_physics()
+        if self.motion_drive_mode == "position":
+            self._apply_position_driven_slide()
+        else:
+            # Drive the object by velocity rather than teleporting qpos. This lets
+            # MuJoCo contact dynamics carry other objects (for example cheese on a
+            # moving plate) instead of the support object sliding underneath them.
+            self._transfer_scripted_velocity_to_physics()
 
-        decay = 0.96 if drive_step_idx < drive_limit else 0.90
+        decay = self._script_decay_factor()
         end_speed = float(self.motion_end_speed)
         if self.motion_path == "diagonal":
-            self._slide_velocity_primary = max(abs(self.motion_drive_speed), 1e-4)
-            self._slide_velocity_secondary = max(abs(self.motion_secondary_speed), 1e-4)
+            primary_speed = abs(float(self.motion_initial_speed))
+            if primary_speed < 1e-8:
+                primary_speed = abs(float(self.motion_drive_speed))
+            secondary_speed = abs(float(self.motion_secondary_speed))
+            # if secondary_speed < 1e-8:
+            #     secondary_speed = primary_speed
+            self._slide_velocity_primary = primary_speed
+            self._slide_velocity_secondary = secondary_speed
+        elif self.motion_path == "curve":
+            if self.motion_speed_profile == "constant":
+                self._slide_velocity_primary = self._return_direction * abs(float(self.motion_drive_speed))
+                self._slide_velocity_secondary = abs(float(self.motion_secondary_speed))
+            else:
+                self._slide_velocity_primary *= decay
+                self._slide_velocity_secondary *= decay
+                if abs(self._slide_velocity_primary) < max(abs(end_speed), 1e-4):
+                    self._slide_velocity_primary = 0.0
+                if abs(self._slide_velocity_secondary) < max(abs(end_speed), 1e-4):
+                    self._slide_velocity_secondary = 0.0
         elif self.motion_path == "right_angle" and self.motion_turn_cycles != 1:
             # For cyclic square motion, keep a stable scripted speed instead of
             # decaying toward zero. Otherwise the path visually slows down and
             # appears to stop after a while.
-            self._slide_velocity_primary = max(abs(self.motion_drive_speed), 1e-4)
-            self._slide_velocity_secondary = max(abs(self.motion_secondary_speed), 1e-4)
+            self._slide_velocity_primary = abs(self.motion_drive_speed)
+            self._slide_velocity_secondary = abs(self.motion_secondary_speed)
         else:
-            if self.motion_path == "right_angle" and drive_step_idx >= turn_step:
+            if self.motion_speed_profile == "constant":
+                if self.motion_path == "right_angle" and drive_step_idx >= turn_step:
+                    self._slide_velocity_secondary = np.sign(
+                        self._slide_velocity_secondary if abs(self._slide_velocity_secondary) > 1e-8 else 1.0
+                    ) * abs(float(self.motion_secondary_speed))
+                else:
+                    self._slide_velocity_primary = self._return_direction * abs(float(self.motion_drive_speed))
+            elif self.motion_path == "right_angle" and drive_step_idx >= turn_step:
                 self._slide_velocity_secondary *= decay
                 if abs(self._slide_velocity_secondary) < max(abs(end_speed), 1e-4):
                     self._slide_velocity_secondary = 0.0
@@ -449,7 +625,10 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
                 if abs(self._slide_velocity_primary) < max(abs(end_speed), 1e-4):
                     self._slide_velocity_primary = 0.0
 
-            if (
+            if self.motion_speed_profile == "constant":
+                if drive_step_idx >= drive_limit:
+                    self._velocity_injected = True
+            elif (
                 abs(self._slide_velocity_primary) < max(abs(end_speed), 1e-4)
                 and abs(self._slide_velocity_secondary) < max(abs(end_speed), 1e-4)
             ):
@@ -472,6 +651,42 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             except Exception:
                 return False
 
+    def _is_motion_object_in_gripper_contact(self) -> bool:
+        if self.moving_object_name is None or self.moving_object_name not in self.objects_dict:
+            return False
+        if not getattr(self, "robots", None):
+            return False
+
+        moving_object = self.objects_dict[self.moving_object_name]
+        object_geoms = set(getattr(moving_object, "contact_geoms", None) or [])
+        if not object_geoms:
+            return False
+
+        gripper = getattr(self.robots[0], "gripper", None)
+        gripper_geoms = set(getattr(gripper, "contact_geoms", None) or [])
+        if not gripper_geoms:
+            return False
+
+        try:
+            ncon = int(self.sim.data.ncon)
+        except Exception:
+            return False
+
+        for contact_idx in range(ncon):
+            try:
+                contact = self.sim.data.contact[contact_idx]
+                geom1 = self.sim.model.geom_id2name(int(contact.geom1))
+                geom2 = self.sim.model.geom_id2name(int(contact.geom2))
+            except Exception:
+                continue
+            if geom1 is None or geom2 is None:
+                continue
+            if geom1 in gripper_geoms and geom2 in object_geoms:
+                return True
+            if geom2 in gripper_geoms and geom1 in object_geoms:
+                return True
+        return False
+
     def _post_process(self):
         super()._post_process()
         if not self.motion_enabled:
@@ -481,6 +696,12 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         if self._motion_stopped_by_grasp:
             return
 
+        if self.motion_stop_on_gripper_contact and self._is_motion_object_in_gripper_contact():
+            self._stop_motion()
+            self._motion_stopped_by_grasp = True
+            self._velocity_injected = True
+            return
+
         if self._is_motion_object_grasped():
             self._stop_motion()
             self._motion_stopped_by_grasp = True
@@ -488,6 +709,7 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
             return
 
         if self._velocity_injected:
+            self._apply_velocity_decay()
             if self._maybe_reverse_motion():
                 self._velocity_injected = False
             return
@@ -498,11 +720,7 @@ class Libero_Dynamic_Floor_Manipulation(Libero_Floor_Manipulation):
         if self._post_reset_step_idx < self.motion_settle_steps:
             return
 
-        initial_velocity_only = (
-            abs(float(self.motion_initial_speed)) > 1e-8
-            and abs(float(self.motion_drive_speed)) < 1e-8
-            and abs(float(self.motion_secondary_speed)) < 1e-8
-        )
+        initial_velocity_only = self._uses_physics_only_drive()
         if initial_velocity_only:
             if not self._friction_restored:
                 if self.motion_object_resistance_scale is not None:

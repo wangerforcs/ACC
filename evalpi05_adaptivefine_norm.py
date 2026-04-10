@@ -42,6 +42,10 @@ from vlash.configs.train_config import VLASHTrainConfig
 from adaptive.adaptivepolicyfinegrained_tracker_scoregate import AdaptiveActionChunker
 # from adaptive.adaptivepolicyfinegrained import AdaptiveActionChunker
 from adaptive.monitor import GPUMonitor
+from adaptive.motion_estimators import (
+    project_world_point_to_observed_pixel,
+    reconstruct_box_center_world_point,
+)
 
 
 def _unwrap_to_libero_env(env):
@@ -61,6 +65,169 @@ def _unwrap_to_libero_env(env):
     return None
 
 
+def _unwrap_to_inner_problem_env(env):
+    current = env
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if (
+            hasattr(current, "sim")
+            and (
+                hasattr(current, "get_dynamic_object_position")
+                or hasattr(current, "objects_dict")
+                or hasattr(current, "moving_object_name")
+            )
+        ):
+            return current
+        if hasattr(current, "env"):
+            current = current.env
+            continue
+        if hasattr(current, "_env"):
+            current = current._env
+            continue
+        if hasattr(current, "unwrapped") and current.unwrapped is not current:
+            current = current.unwrapped
+            continue
+        break
+    return None
+
+
+def _canonical_object_key(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    normalized = text.replace("-", "_").replace(" ", "_")
+    parts = [part for part in normalized.split("_") if part]
+    if parts and parts[-1].isdigit():
+        parts = parts[:-1]
+    return "_".join(parts)
+
+
+def _extract_sim_gt_positions(
+    vec_env: gym.vector.VectorEnv,
+    object_names: list[str] | tuple[str, ...] | None,
+):
+    if not hasattr(vec_env, "envs") or not vec_env.envs:
+        return {}
+
+    libero_env = _unwrap_to_libero_env(vec_env.envs[0])
+    if libero_env is None:
+        return {}
+
+    try:
+        base_env = _unwrap_to_inner_problem_env(libero_env)
+        if base_env is None:
+            logging.info("sim_gt inner env unresolved from libero wrapper")
+            return {}
+        sim = base_env.sim
+        objects_dict = getattr(base_env, "objects_dict", {}) or {}
+        positions = {}
+
+        # Dynamic LIBERO env already knows which object is being scripted and how
+        # to expose its root-body position. Prefer that over guessing from raw
+        # MuJoCo body names.
+        get_dynamic_object_position = getattr(base_env, "get_dynamic_object_position", None)
+        moving_object_name = getattr(base_env, "moving_object_name", None)
+        if callable(get_dynamic_object_position):
+            try:
+                dynamic_pos = get_dynamic_object_position()
+            except Exception:
+                dynamic_pos = None
+            if dynamic_pos is not None and moving_object_name:
+                dynamic_pos = np.asarray(dynamic_pos, dtype=np.float32).reshape(-1)
+                if dynamic_pos.shape[0] >= 3 and np.isfinite(dynamic_pos[:3]).all():
+                    positions[str(moving_object_name)] = dynamic_pos[:3]
+                    canonical = _canonical_object_key(moving_object_name)
+                    if canonical:
+                        positions[canonical] = dynamic_pos[:3]
+                    logging.debug(
+                        "sim_gt dynamic object resolved via env API: moving_object_name=%s canonical=%s position=%s",
+                        moving_object_name,
+                        canonical,
+                        dynamic_pos[:3].tolist(),
+                    )
+
+        for object_name, obj in objects_dict.items():
+            root_body = getattr(obj, "root_body", None) if obj is not None else None
+            if root_body is None:
+                continue
+            try:
+                body_id = int(sim.model.body_name2id(root_body))
+            except Exception:
+                continue
+            resolved_position = np.array(sim.data.body_xpos[body_id], dtype=np.float32)
+            if resolved_position.shape[0] < 3 or not np.isfinite(resolved_position[:3]).all():
+                continue
+            positions[str(object_name)] = resolved_position[:3]
+            object_key = _canonical_object_key(object_name)
+            if object_key:
+                positions[object_key] = resolved_position[:3]
+            positions[str(root_body)] = resolved_position[:3]
+            root_key = _canonical_object_key(root_body)
+            if root_key:
+                positions[root_key] = resolved_position[:3]
+
+        for name in object_names or ():
+            if not name:
+                continue
+            requested = str(name)
+            requested_canonical = _canonical_object_key(requested)
+            if requested in positions or (requested_canonical and requested_canonical in positions):
+                continue
+
+            candidate_object_names = [requested]
+            if requested_canonical:
+                for object_name in objects_dict.keys():
+                    object_key = _canonical_object_key(object_name)
+                    if object_key == requested_canonical and object_name not in candidate_object_names:
+                        candidate_object_names.append(object_name)
+
+            resolved_position = None
+            resolved_name = None
+            resolved_root_body = None
+            for object_name in candidate_object_names:
+                if object_name in positions:
+                    resolved_position = np.asarray(positions[object_name], dtype=np.float32)
+                    resolved_name = object_name
+                    candidate_obj = objects_dict.get(object_name)
+                    resolved_root_body = getattr(candidate_obj, "root_body", None) if candidate_obj is not None else None
+                    break
+
+            if resolved_position is None:
+                logging.info(
+                    "sim_gt object unresolved: requested=%s requested_canonical=%s objects_dict_keys_sample=%s",
+                    requested,
+                    requested_canonical,
+                    list(objects_dict.keys())[:20],
+                )
+                continue
+
+            positions[requested] = resolved_position
+            if requested_canonical:
+                positions[requested_canonical] = resolved_position
+            if resolved_name is not None:
+                positions[resolved_name] = resolved_position
+                resolved_name_key = _canonical_object_key(resolved_name)
+                if resolved_name_key:
+                    positions[resolved_name_key] = resolved_position
+            if resolved_root_body is not None:
+                positions[str(resolved_root_body)] = resolved_position
+                resolved_root_key = _canonical_object_key(resolved_root_body)
+                if resolved_root_key:
+                    positions[resolved_root_key] = resolved_position
+            logging.debug(
+                "sim_gt object resolved via objects_dict: requested=%s resolved_name=%s resolved_root_body=%s position=%s",
+                requested,
+                resolved_name,
+                resolved_root_body,
+                resolved_position[:3].tolist(),
+            )
+        return positions
+    except Exception as exc:
+        logging.warning(f"Failed to extract sim ground-truth positions: {exc}")
+        return {}
+
+
 def _extract_camera_projection(vec_env: gym.vector.VectorEnv, camera_name: str = "agentview"):
     if not hasattr(vec_env, "envs") or not vec_env.envs:
         return None
@@ -70,25 +237,55 @@ def _extract_camera_projection(vec_env: gym.vector.VectorEnv, camera_name: str =
         return None
 
     try:
-        from robosuite.utils.camera_utils import get_camera_transform_matrix
+        from robosuite.utils.camera_utils import (
+            get_camera_extrinsic_matrix,
+            get_camera_intrinsic_matrix,
+            get_camera_transform_matrix,
+        )
     except Exception as exc:
         logging.warning(f"Failed to import robosuite camera utils: {exc}")
         return None
 
     try:
-        sim = libero_env._env.sim
+        base_env = _unwrap_to_inner_problem_env(libero_env)
+        if base_env is None:
+            return None
+        sim = base_env.sim
         height = int(getattr(libero_env, "observation_height", 256))
         width = int(getattr(libero_env, "observation_width", 256))
+        env_control_freq = float(getattr(base_env, "control_freq", getattr(libero_env, "control_freq", 20.0)))
+        camera_intrinsics = get_camera_intrinsic_matrix(
+            sim=sim,
+            camera_name=camera_name,
+            camera_height=height,
+            camera_width=width,
+        )
+        camera_to_world = get_camera_extrinsic_matrix(sim=sim, camera_name=camera_name)
         world_to_image = get_camera_transform_matrix(
             sim=sim,
             camera_name=camera_name,
             camera_height=height,
             camera_width=width,
         )
+        extent = float(sim.model.stat.extent)
+        near = float(sim.model.vis.map.znear * extent)
+        far = float(sim.model.vis.map.zfar * extent)
         return {
             "camera_name": camera_name,
+            "camera_intrinsics": np.array(camera_intrinsics, dtype=np.float32),
+            "camera_to_world": np.array(camera_to_world, dtype=np.float32),
             "camera_world_to_image": np.array(world_to_image, dtype=np.float32),
             "camera_resolution": (height, width),
+            "camera_depth_near": near,
+            "camera_depth_far": far,
+            "camera_depth_normalized": True,
+            "env_control_freq": env_control_freq,
+            "env_control_dt": 1.0 / max(env_control_freq, 1.0),
+            # LeRobot LIBERO flips observations with image[::-1, ::-1]. Existing
+            # projection utilities are already row-compatible, so we only need
+            # to undo the horizontal mirror when back-projecting from observed
+            # pixels into 3D.
+            "camera_observation_mirror_x": True,
         }
     except Exception as exc:
         logging.warning(f"Failed to extract camera projection for {camera_name}: {exc}")
@@ -109,6 +306,7 @@ class VLASHEvalConfig:
     """评估配置类"""
     env_type: str = "libero"
     env_task: str = "libero_object"
+    episode_length: int = 280
     max_episodes: int = 20  # 每个子任务测试的集数
     eval_batch_size: int = 5 # 并行环境数
     seed: int = 42
@@ -134,11 +332,12 @@ class VLASHEvalConfig:
     adaptive_uncertainty_threshold: float = 0.015
     adaptive_coverage_threshold: float = 0.1
     adaptive_continuity_threshold: float = 0.2
-    dino_refresh_interval: int = 20
+    dino_refresh_interval: int = 400
     
     # 视频保存配置
     save_video: bool = False
     video_output_dir: str = "fuckvideos"
+    video_overlay_debug: bool = False
     
     use_monitor: bool = False
     eval_log_level: str = "INFO"
@@ -147,6 +346,16 @@ class VLASHEvalConfig:
     scoregate_log_level: str = "WARNING"
     enable_gripper_interruption: bool = False
     enable_object_motion_penalty: bool = False
+    object_motion_metric: str = "bbox2d"
+    object_motion_speed_threshold: float = 0.03
+    object_motion_speed_exit_threshold: float = 0.015
+    object_motion_fast_speed_threshold: float = 0.08
+    object_motion_depth_inner_ratio: float = 0.6
+    object_motion_depth_min_valid_ratio: float = 0.2
+    enable_small_chunk_action_skip: bool = False
+    small_chunk_action_skip_threshold: int = 5
+    small_chunk_action_skip_offset: int = 1
+    small_chunk_action_skip_max_gripper_delta: float = 0.5
     adaptive_chunker_cls_path: str = ( #默认是finegrained_tracker_scoregate
         "adaptive.adaptivepolicyfinegrained_tracker_scoregate:AdaptiveActionChunker"
     )
@@ -157,6 +366,8 @@ class VLASHEvalConfig:
     def __post_init__(self):
         if self.target_control_hz is not None and self.target_control_hz <= 0:
             raise ValueError("target_control_hz must be positive when provided")
+        if self.target_control_hz is not None:
+            self.fps = int(round(float(self.target_control_hz)))
         if not isinstance(self.policy, PreTrainedConfig):
             policy_path = None
             cli_overrides = []
@@ -175,6 +386,7 @@ class VLASHEvalConfig:
             if cli_policy_overrides: cli_overrides.extend(cli_policy_overrides)
         
             if policy_path:
+                logging.info(f"Loading policy config from {policy_path} with CLI overrides: {cli_overrides}")
                 self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
                 self.policy.pretrained_path = policy_path
 
@@ -221,9 +433,16 @@ def _write_yaml_file(path: Path, data):
 def _collect_eval_runtime_config(cfg: VLASHEvalConfig, adaptive_chunker):
     config = {
         "env_task": cfg.env_task,
+        "episode_length": cfg.episode_length,
         "use_adaptive_chunk": cfg.use_adaptive_chunk,
         "enable_gripper_interruption": cfg.enable_gripper_interruption,
         "enable_object_motion_penalty": cfg.enable_object_motion_penalty,
+        "object_motion_metric": cfg.object_motion_metric,
+        "object_motion_speed_threshold": cfg.object_motion_speed_threshold,
+        "object_motion_speed_exit_threshold": cfg.object_motion_speed_exit_threshold,
+        "object_motion_fast_speed_threshold": cfg.object_motion_fast_speed_threshold,
+        "object_motion_depth_inner_ratio": cfg.object_motion_depth_inner_ratio,
+        "object_motion_depth_min_valid_ratio": cfg.object_motion_depth_min_valid_ratio,
         "adaptive_min_horizon": cfg.adaptive_min_horizon,
         "adaptive_max_horizon": cfg.adaptive_max_horizon,
         "adaptive_uncertainty_threshold": cfg.adaptive_uncertainty_threshold,
@@ -234,6 +453,7 @@ def _collect_eval_runtime_config(cfg: VLASHEvalConfig, adaptive_chunker):
         "eval_batch_size": cfg.eval_batch_size,
         "max_episodes": cfg.max_episodes,
         "seed": cfg.seed,
+        "video_overlay_debug": cfg.video_overlay_debug,
     }
     if adaptive_chunker is not None and hasattr(adaptive_chunker, "get_runtime_config"):
         config["adaptive_chunker"] = adaptive_chunker.get_runtime_config()
@@ -276,6 +496,7 @@ def _log_effective_eval_setup(cfg: VLASHEvalConfig):
     logging.info(f"Use adaptive chunk: {cfg.use_adaptive_chunk}")
     logging.info(f"Enable gripper interruption: {cfg.enable_gripper_interruption}")
     logging.info(f"Enable object motion penalty: {cfg.enable_object_motion_penalty}")
+    logging.info(f"Object motion metric: {cfg.object_motion_metric}")
     logging.info(f"Inference overlap steps: {cfg.inference_overlap_steps}")
     logging.info(f"Target control hz: {cfg.target_control_hz}")
     logging.info(f"Action quant ratio: {cfg.action_quant_ratio}")
@@ -332,6 +553,13 @@ class VLASHVectorAsyncManager:
                 continuity_threshold=env_continuity_threshold,
                 enable_object_motion_penalty=cfg.enable_object_motion_penalty,
                 dynamic_motion_object_name=getattr(cfg, "dynamic_moving_object_name", None),
+                object_motion_metric=cfg.object_motion_metric,
+                object_motion_speed_threshold=cfg.object_motion_speed_threshold,
+                object_motion_speed_exit_threshold=cfg.object_motion_speed_exit_threshold,
+                object_motion_fast_speed_threshold=cfg.object_motion_fast_speed_threshold,
+                object_motion_control_dt=1.0 / max(cfg.target_control_hz, 1e-6),
+                object_motion_depth_inner_ratio=cfg.object_motion_depth_inner_ratio,
+                object_motion_depth_min_valid_ratio=cfg.object_motion_depth_min_valid_ratio,
                 dino_refresh_interval=cfg.dino_refresh_interval,
             )
             # 初始chunk size
@@ -367,11 +595,13 @@ class VLASHVectorAsyncManager:
         
         self.video_images = []
         self.target_layers = [9, 10, 11, 12]
+        # self.target_layers = [6, 11, 12, 17]
         self.video_heatmap = []
         
         # 视频保存相关
         self.save_video = cfg.save_video
         self.video_output_dir = cfg.video_output_dir
+        self.video_overlay_debug = bool(cfg.video_overlay_debug)
         
         self.indexes = None
         self.inference_times = 0
@@ -381,11 +611,52 @@ class VLASHVectorAsyncManager:
         self.active_env_mask = np.ones(self.num_envs, dtype=bool)
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
         self.camera_projection = None
+        self.image_depth = None
+        self.vec_env = None
+        self.current_task_description = task_name
         self.latest_background_info = None
-        self.predict_action_time_ms = []
-        self.attn_maps_time_ms = []
-        self.value_func_time_ms = []
-        self.background_heuristic_time_ms = []
+
+    def _update_latest_background_info(self, background_info: Optional[Dict[str, Any]]) -> None:
+        if not background_info:
+            return
+        merged = dict(self.latest_background_info or {})
+        for key, value in background_info.items():
+            if value is not None:
+                merged[key] = value
+            elif key not in merged:
+                merged[key] = value
+        self.latest_background_info = merged
+
+    def _drop_stale_background_futures(self) -> None:
+        """Keep the single newest background task and discard stale queued ones.
+
+        Background heuristic tasks can queue up behind expensive DINO refreshes.
+        For control we care much more about the newest observation than about
+        consuming every intermediate heuristic result in order.
+        """
+        if len(self.background_futures) <= 1:
+            return
+
+        newest_task_id, newest_future = self.background_futures[-1]
+        kept: list[tuple[int, concurrent.futures.Future]] = []
+
+        for task_id, future in self.background_futures[:-1]:
+            if future.done():
+                # Let the normal consume path decide whether to use/drop it.
+                kept.append((task_id, future))
+                continue
+            if future.cancel():
+                logging.info(
+                    "Dropping stale background task before execution: task_id=%s (latest=%s)",
+                    task_id,
+                    newest_task_id,
+                )
+            else:
+                # Already running; can't cancel, so keep it.
+                kept.append((task_id, future))
+
+        kept.append((newest_task_id, newest_future))
+        self.background_futures = kept
 
     def reset_state(self):
         """每个 Batch 开始前调用"""
@@ -423,10 +694,6 @@ class VLASHVectorAsyncManager:
         self.active_env_mask = np.ones(self.num_envs, dtype=bool)
         self.per_env_inference_counts = np.zeros(self.num_envs, dtype=int)
         self.latest_background_info = None
-        self.predict_action_time_ms = []
-        self.attn_maps_time_ms = []
-        self.value_func_time_ms = []
-        self.background_heuristic_time_ms = []
 
     def shutdown(self):
         """显式关闭后台线程池，避免在解释器退出阶段留下悬挂 worker。"""
@@ -486,32 +753,6 @@ class VLASHVectorAsyncManager:
             "max": int(max(self.launch_step_intervals)),
         }
 
-    def get_latency_breakdown_stats(self):
-        def _stats(values):
-            if not values:
-                return {
-                    "count": 0,
-                    "mean_ms": 0.0,
-                    "min_ms": None,
-                    "max_ms": None,
-                    "total_ms": 0.0,
-                }
-            arr = np.asarray(values, dtype=np.float64)
-            return {
-                "count": int(arr.size),
-                "mean_ms": float(arr.mean()),
-                "min_ms": float(arr.min()),
-                "max_ms": float(arr.max()),
-                "total_ms": float(arr.sum()),
-            }
-
-        return {
-            "predict_action": _stats(self.predict_action_time_ms),
-            "get_attn_maps": _stats(self.attn_maps_time_ms),
-            "value_func": _stats(self.value_func_time_ms),
-            "background_heuristic": _stats(self.background_heuristic_time_ms),
-        }
-
     def save_video_frames(self, filename):
         """保存视频"""
         if not self.video_images:
@@ -527,25 +768,19 @@ class VLASHVectorAsyncManager:
 
         writer_used = None
         try:
-            import imageio.v2 as imageio
+            import mediapy as media
 
-            imageio.mimwrite(str(video_path), frames, fps=self.cfg.fps)
-            writer_used = "imageio"
+            media.write_video(str(video_path), frames, fps=self.cfg.fps)
+            writer_used = "mediapy"
         except Exception:
-            try:
-                import mediapy as media
-
-                media.write_video(str(video_path), frames, fps=self.cfg.fps)
-                writer_used = "mediapy"
-            except Exception:
-                height, width, _ = frames[0].shape
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                out = cv2.VideoWriter(str(video_path), fourcc, self.cfg.fps, (width, height))
-                for img in frames:
-                    frame = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.shape[-1] == 3 else img
-                    out.write(frame)
-                out.release()
-                writer_used = "cv2"
+            height, width, _ = frames[0].shape
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(str(video_path), fourcc, self.cfg.fps, (width, height))
+            for img in frames:
+                frame = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.shape[-1] == 3 else img
+                out.write(frame)
+            out.release()
+            writer_used = "cv2"
 
         logging.info(f"Video saved to {video_path}")
         logging.info(f"Video writer used: {writer_used}")
@@ -554,32 +789,130 @@ class VLASHVectorAsyncManager:
     def _annotate_debug_frame(self, frame):
         annotated = frame.copy()
         info = self.latest_background_info or {}
-        gripper_box = info.get("gripper_box")
-        if gripper_box is None:
-            return annotated
-
         try:
             height, width = annotated.shape[:2]
-            x1 = int(float(gripper_box[0]) * width)
-            y1 = int(float(gripper_box[1]) * height)
-            x2 = int(float(gripper_box[2]) * width)
-            y2 = int(float(gripper_box[3]) * height)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            contact_phrases = info.get("gripper_contact_phrases") or []
-            if contact_phrases:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            small_font_scale = 0.36
+            tiny_font_scale = 0.32
+            text_thickness = 1
+            box_thickness = 1
+            phrases = info.get("phrases") or []
+            boxes = info.get("dino_boxes") or []
+
+            def _norm_to_px(box):
+                x1 = int(float(box[0]) * width)
+                y1 = int(float(box[1]) * height)
+                x2 = int(float(box[2]) * width)
+                y2 = int(float(box[3]) * height)
+                return x1, y1, x2, y2
+
+            for idx, box in enumerate(boxes):
+                if box is None or len(box) < 4:
+                    continue
+                phrase = phrases[idx] if idx < len(phrases) else f"obj_{idx}"
+                x1, y1, x2, y2 = _norm_to_px(box)
+                color = (255, 200, 0)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
                 cv2.putText(
                     annotated,
-                    f"gripper: {','.join(contact_phrases)}",
-                    (x1, max(18, y1 - 6)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
-                    1,
+                    phrase[:48],
+                    (x1, max(12, y1 - 4)),
+                    font,
+                    small_font_scale,
+                    color,
+                    text_thickness,
                     cv2.LINE_AA,
                 )
+
+            object_points_pixel_by_phrase = info.get("object_points_pixel_by_phrase") or {}
+            object_points_world_by_phrase = info.get("object_points_world_by_phrase") or {}
+            for phrase, pixel in object_points_pixel_by_phrase.items():
+                if pixel is None or len(pixel) < 2:
+                    continue
+                col = int(pixel[0])
+                row = int(pixel[1])
+                cv2.circle(annotated, (col, row), 3, (0, 0, 255), -1)
+                coords = object_points_world_by_phrase.get(phrase)
+                if coords is not None and len(coords) >= 3:
+                    coord_text = f"{phrase[:18]} ({coords[0]:.2f},{coords[1]:.2f},{coords[2]:.2f})"
+                else:
+                    coord_text = phrase[:24]
+                text_y = min(max(12, row - 6), height - 6)
+                text_x = min(max(0, col + 6), max(0, width - 180))
+                cv2.putText(
+                    annotated,
+                    coord_text,
+                    (text_x, text_y),
+                    font,
+                    tiny_font_scale,
+                    (0, 0, 255),
+                    text_thickness,
+                    cv2.LINE_AA,
+                )
+
+            gripper_box = info.get("gripper_box")
+            if gripper_box is not None:
+                x1, y1, x2, y2 = _norm_to_px(gripper_box)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), box_thickness)
+            cv2.putText(
+                annotated,
+                f"step={info.get('step', self.batch_env_step)}",
+                (8, 14),
+                font,
+                tiny_font_scale,
+                (255, 255, 255),
+                text_thickness,
+                cv2.LINE_AA,
+            )
         except Exception:
             return frame
         return annotated
+
+    def _compute_frame_object_points(self, raw_obs: Dict[str, Any], frame_info: Dict[str, Any]) -> None:
+        if self.camera_projection is None:
+            return
+        if "pixels" not in raw_obs or not isinstance(raw_obs["pixels"], dict):
+            return
+        depth = raw_obs["pixels"].get("image_depth")
+        if depth is None:
+            return
+        phrases = frame_info.get("phrases") or []
+        boxes = frame_info.get("dino_boxes") or []
+        if not phrases or not boxes:
+            return
+
+        depth_map = np.asarray(depth[0], dtype=np.float32)
+        robot_state = dict(self.camera_projection)
+        object_points_world_by_phrase = {}
+        object_points_pixel_by_phrase = {}
+        point_meta_by_phrase = {}
+        for idx, phrase in enumerate(phrases):
+            if idx >= len(boxes):
+                continue
+            box = boxes[idx]
+            if box is None or len(box) < 4:
+                continue
+            point_world, meta = reconstruct_box_center_world_point(
+                box,
+                depth_map,
+                robot_state,
+                depth_inner_ratio=self.cfg.object_motion_depth_inner_ratio,
+                depth_min_valid_ratio=self.cfg.object_motion_depth_min_valid_ratio,
+            )
+            if point_world is None:
+                continue
+            pixel = project_world_point_to_observed_pixel(point_world, robot_state)
+            object_points_world_by_phrase[phrase] = np.asarray(point_world, dtype=np.float32).tolist()
+            if pixel is not None:
+                object_points_pixel_by_phrase[phrase] = np.asarray(pixel, dtype=np.int32).tolist()
+            point_meta_by_phrase[phrase] = dict(meta)
+
+        if object_points_world_by_phrase:
+            frame_info["object_points_world_by_phrase"] = object_points_world_by_phrase
+        if object_points_pixel_by_phrase:
+            frame_info["object_points_pixel_by_phrase"] = object_points_pixel_by_phrase
+        if point_meta_by_phrase:
+            frame_info["object_points_meta_by_phrase"] = point_meta_by_phrase
 
     def _project_gripper_box_from_obs(self, raw_obs: Dict[str, Any]):
         if self.camera_projection is None or "agent_pos" not in raw_obs:
@@ -599,7 +932,10 @@ class VLASHVectorAsyncManager:
             )
             row = int(projected[0][0])
             col = int(projected[0][1])
-            col = (int(width) - 1) - col
+            if self.camera_projection.get("camera_observation_mirror_x", False):
+                col = (int(width) - 1) - col
+            if self.camera_projection.get("camera_observation_mirror_y", False):
+                row = (int(height) - 1) - row
             half = 18
             x1 = max(0, col - half)
             y1 = max(0, row - half)
@@ -615,10 +951,32 @@ class VLASHVectorAsyncManager:
             return None
 
     def _annotate_debug_frame_from_obs(self, frame, raw_obs: Dict[str, Any]):
+        if not (self.video_overlay_debug or self.save_video):
+            return frame
         frame_info = dict(self.latest_background_info or {})
+        cached_boxes = getattr(self.adaptive_chunker, "cached_boxes", None) if self.adaptive_chunker is not None else None
+        if cached_boxes is not None and len(cached_boxes) >= 4:
+            boxes_xyxy = cached_boxes[1]
+            phrases = cached_boxes[3]
+            if boxes_xyxy is not None:
+                try:
+                    if hasattr(boxes_xyxy, "detach"):
+                        boxes_xyxy = boxes_xyxy.detach().cpu().tolist()
+                    else:
+                        boxes_xyxy = np.asarray(boxes_xyxy).tolist()
+                    frame_info["dino_boxes"] = boxes_xyxy
+                    frame_info["phrases"] = list(phrases) if phrases is not None else []
+                    frame_info.setdefault("box_source", "tracker_cache")
+                except Exception:
+                    pass
         current_gripper_box = self._project_gripper_box_from_obs(raw_obs)
         if current_gripper_box is not None:
             frame_info["gripper_box"] = current_gripper_box
+        self._compute_frame_object_points(raw_obs, frame_info)
+        frame_info["step"] = self.batch_env_step
+        tracker_untrusted = getattr(self.adaptive_chunker, "tracker_untrusted_by_phrase", None)
+        if tracker_untrusted:
+            frame_info["tracker_untrusted_phrases"] = [phrase for phrase, flagged in tracker_untrusted.items() if flagged]
         previous_info = self.latest_background_info
         self.latest_background_info = frame_info
         annotated = self._annotate_debug_frame(frame)
@@ -629,29 +987,26 @@ class VLASHVectorAsyncManager:
         """
         将 VectorEnv 的原始观测转换为 Policy 需要的 Batch Tensor 格式
         """
+        # 0.4.1是agent_pos, 0,4,4是 robot_state字典，我觉得这里似乎
         # 注意：VectorEnv 返回的 raw_obs 已经是 [B, ...] 格式了
         
-        # 为了兼容 prepare_observation_for_inference，我们手动构造 Batch 数据
         batch_input = {}
         
-        # 1. 处理状态 (Proprioception)
         if "agent_pos" in raw_obs:
-            # raw_obs["agent_pos"] 形状是 [B, StateDim]
+            # 统一都是xyz(3) angles(3) gripper(2) 不管实际返回什么，模型需要的事这个
             batch_input["observation.state"] = torch.from_numpy(raw_obs["agent_pos"]).float().to(self.device)
         
-        # 2. 处理图像
         if "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict):
             for k, v in raw_obs["pixels"].items():
                 '''
-                image (1, 256, 256, 3)
-                image2 (1, 256, 256, 3)
+                image (1, 256, 256, 3) image2 (1, 256, 256, 3)
                 '''
                 # v 形状是 [B, H, W, C] -> 需要转换为 [B, C, H, W] 并归一化
+                if "depth" in k:
+                    continue
                 img_tensor = torch.from_numpy(v).float().permute(0, 3, 1, 2).to(self.device) / 255.0
                 batch_input[f"observation.images.{k}"] = img_tensor
         
-        # 3. 处理任务描述
-        # 策略通常期望任务描述是一个 List[str] 或统一的字符串
         batch_input["task"] = [task_description] * self.num_envs
         
         return batch_input
@@ -692,24 +1047,28 @@ class VLASHVectorAsyncManager:
     def _inference_task(self, batch_obs_prepared):
         """在后台线程执行的推理函数"""
         with torch.inference_mode():
-            t0 = time.perf_counter()
             actions = self.policy.predict_action_chunk(batch_obs_prepared)
-            if self.device.type == "cuda":
-                torch.cuda.synchronize(self.device)
-            self.predict_action_time_ms.append((time.perf_counter() - t0) * 1000.0)
+            # if self.cfg.use_adaptive_chunk:
+            #     actions = self.policy.predict_action_chunk(batch_obs_prepared)
+            # else:
+            #     actions_shape = (
+            #         batch_obs_prepared["observation.state"].shape[0],
+            #         self.policy.config.n_action_steps,
+            #         self.policy.config.max_action_dim,
+            #     )
+            #     noise = self.policy.model.sample_noise(actions_shape, device=batch_obs_prepared["observation.state"].device)
+            #     actions = self.policy.predict_action_chunk(batch_obs_prepared, noise=noise)
             return actions.cpu().numpy() # [B, Horizon, ActionDim]
 
     def _background_adaptive_task(self, task_id, image, instruction, robot_state=None):
         """在后台线程执行的自适应chunk size调整"""
         if self.adaptive_chunker:
-            t0 = time.perf_counter()
             proposal = self.adaptive_chunker.propose_adaptive_chunk_heuristic(
                 image,
                 instruction,
                 robot_state,
                 current_horizon=self.current_chunk_size,
             )
-            self.background_heuristic_time_ms.append((time.perf_counter() - t0) * 1000.0)
             proposal = self._normalize_chunk_proposal(proposal)
             return {
                 "task_id": task_id,
@@ -722,7 +1081,6 @@ class VLASHVectorAsyncManager:
     def _value_func_task(self, task_id, image, instruction, attention_map, value_context):
         if self.adaptive_chunker is None:
             return {}
-        t0 = time.perf_counter()
         proposal = self.adaptive_chunker.propose_value_horizon(
             image,
             instruction,
@@ -734,7 +1092,6 @@ class VLASHVectorAsyncManager:
             current_horizon=value_context.get("current_horizon", self.current_chunk_size),
             box_source=value_context.get("box_source"),
         )
-        self.value_func_time_ms.append((time.perf_counter() - t0) * 1000.0)
         proposal = self._normalize_chunk_proposal(proposal)
         return {
             "task_id": task_id,
@@ -755,27 +1112,49 @@ class VLASHVectorAsyncManager:
             }
         raise TypeError(f"Unsupported chunk proposal type: {type(proposal)!r}")
 
+    # 周期性的
     def _maybe_launch_background_adaptive(self, raw_obs: Dict[str, Any], task_description: str):
         """Queue one adaptive task for every step on a serial background worker."""
         if not (self.adaptive_chunker and "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict)):
             return
 
         image = raw_obs["pixels"]["image"][0]
+        self.image_depth = raw_obs["pixels"].get("image_depth")
+        if self.image_depth is not None:
+            self.image_depth = self.image_depth[0]
         robot_state = None
         if "agent_pos" in raw_obs:
             agent_pos = raw_obs["agent_pos"][0]
             robot_state = {
                 "ee_position": agent_pos[:3],
                 "gripper_state": agent_pos[-1],
+                "step_index": int(self.batch_env_step),
+                "control_dt": 1.0 / max(self.cfg.target_control_hz, 1e-6),
             }
             if self.camera_projection is not None:
                 robot_state.update(self.camera_projection)
+            if self.image_depth is not None:
+                robot_state["image_depth"] = self.image_depth
+            sim_gt_object_names = []
+            dynamic_name = getattr(self.cfg, "dynamic_moving_object_name", None)
+            if dynamic_name:
+                sim_gt_object_names.append(dynamic_name)
+            if self.vec_env is not None and self.cfg.object_motion_metric == "sim_gt":
+                sim_gt_positions = _extract_sim_gt_positions(self.vec_env, sim_gt_object_names)
+                if sim_gt_positions:
+                    robot_state["sim_gt_positions"] = sim_gt_positions
+                    logging.debug(
+                        "sim_gt robot_state prepared: requested=%s available_keys=%s",
+                        sim_gt_object_names,
+                        sorted(sim_gt_positions.keys()),
+                    )
         task_id = self.background_task_counter
         self.background_task_counter += 1
         future = self.background_executor.submit(
             self._background_adaptive_task, task_id, image, task_description, robot_state
         )
         self.background_futures.append((task_id, future))
+        self._drop_stale_background_futures()
 
     def _consume_background_result_nonblocking(self):
         """Apply finished adaptive-task results without blocking the control loop."""
@@ -881,6 +1260,7 @@ class VLASHVectorAsyncManager:
         self.next_chunk_future = self.executor.submit(self._inference_task, prepared_obs)
 
     def reset_chunk(self, reason=False, set_chunk_size=False):
+        logging.info(f"Resetting chunk: set_chunk_size={set_chunk_size}")
         self.current_chunks = self.next_chunk_future.result()
         self.active_chunk_size = self.valid_chunk_size
         self.last_chunk_size = self.active_chunk_size
@@ -911,6 +1291,24 @@ class VLASHVectorAsyncManager:
             else:
                 return False
         return False
+
+    def _select_action_step_index(self, current_step: int, effective_limit: int) -> int:
+        """Optionally skip one micro-step for very small chunks in post-grasp phases."""
+        if not self.cfg.enable_small_chunk_action_skip or self.cfg.use_adaptive_chunk == False:
+            return current_step, None, None
+        if effective_limit > self.cfg.small_chunk_action_skip_threshold:
+            return current_step, None, None
+
+        skip_offset = max(0, int(self.cfg.small_chunk_action_skip_offset))
+        if skip_offset <= 0:
+            return current_step, None, None
+
+        candidate_step = current_step + skip_offset
+        if candidate_step >= effective_limit:
+            return current_step, None, None
+        original_action_slice = self.current_chunks[:, current_step:candidate_step + 1, :]
+        accumulated_action = original_action_slice.sum(axis=1)
+        return candidate_step, accumulated_action, original_action_slice
 
     def _apply_chunk_update_immediately(self, raw_obs: Dict[str, Any], task_description: str) -> bool:
         """Make newly computed chunk sizes take effect immediately on the current control flow."""
@@ -943,6 +1341,7 @@ class VLASHVectorAsyncManager:
         """
         获取当前步的 Batch Action
         """
+        self.current_task_description = task_description
         if self.save_video:
             if 'image' in raw_obs["pixels"]:
                 self.video_images.append(
@@ -967,7 +1366,7 @@ class VLASHVectorAsyncManager:
             final_chunk = None
             background_info = self._consume_background_result_nonblocking()
             if background_info is not None:
-                self.latest_background_info = background_info
+                self._update_latest_background_info(background_info)
                 final_chunk = background_info.get("current_horizon")
                 logging.info(f"background horizon: {final_chunk}")
             value_info = self._consume_value_func_result_nonblocking()
@@ -980,11 +1379,7 @@ class VLASHVectorAsyncManager:
             # 获取注意力图并使用它进一步调整chunk size (只有在policy真正做chunk推理时才使用ValueFunc)
             if self.adaptive_chunker:
                 try:
-                    t0 = time.perf_counter()
                     attn_maps = self.policy.get_attn_maps(layers=self.target_layers, heads=range(8), force=True)
-                    if self.device.type == "cuda":
-                        torch.cuda.synchronize(self.device)
-                    self.attn_maps_time_ms.append((time.perf_counter() - t0) * 1000.0)
                     if attn_maps:
                         vla_attention_map = attn_maps #[layers, num_heads, seq_len]
                         self._maybe_launch_value_func(
@@ -1018,6 +1413,7 @@ class VLASHVectorAsyncManager:
             # 检查后台自适应任务是否完成
             background_info = self._consume_background_result_nonblocking()
             if background_info is not None:
+                self._update_latest_background_info(background_info)
                 background_horizon = background_info.get("current_horizon")
                 if background_horizon is not None:
                     self.current_chunk_size = background_horizon
@@ -1025,7 +1421,6 @@ class VLASHVectorAsyncManager:
                         self.active_chunk_size = background_horizon
                 if background_info.get("needs_interruption", False):
                     logging.info(f"Interrupting current chunk due to: {background_info.get('factors', 'N/A')}")
-                    # should_launch = True
                 if self.cfg.enable_gripper_interruption and self.should_interrupt_gripper():
                     should_launch = True
                     gripper_change = True
@@ -1059,23 +1454,25 @@ class VLASHVectorAsyncManager:
             self.reset_chunk(gripper_change, set_chunk_size=True)
             self.chunk_index = 0
         
-        current_step = min(self.chunk_index, min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size) - 1)
-        actions = self.current_chunks[:, current_step, :] # [B, ActionDim]
-
+        effective_limit = min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size)
+        current_step = min(self.chunk_index, effective_limit - 1)
+        candidate_step, actions, original_action_slice = self._select_action_step_index(current_step, effective_limit)
+        
+        if actions is None:
+            actions = self.current_chunks[:, current_step, :]
+            self.chunk_index += 1
+        else:
+            self.chunk_index = candidate_step + 1
+        
         if self.adaptive_chunker:
-            self.adaptive_chunker.enqueue_history(actions[0].tolist())
-
-        # self._log_step_state(
-        #     current_step=current_step,
-        #     should_launch=should_launch,
-        #     gripper_change=gripper_change,
-        #     background_info=background_info,
-        # )
-
-        # logging.info(f"Manager: Current chunk index: {self.chunk_index}")
+            if original_action_slice is not None:
+                for action_step in original_action_slice[0]:
+                    self.adaptive_chunker.enqueue_history(action_step)
+            else:
+                self.adaptive_chunker.enqueue_history(actions[0])
 
         # overlapped=4且min horizon=5时会导致一但进入5，就会持续每步预测，然后不连续导致进一步维持在5
-        self.chunk_index = (self.chunk_index + 1)
+        # self.chunk_index = (self.chunk_index + 1)
         # logging.info(f"last chunk size: {self.last_chunk_size}, valid chunk size: {self.valid_chunk_size}")
         # 当达到当前chunk size或最大步骤时，重置
         if self.chunk_index >= min(self.active_chunk_size, self.n_action_steps, self.last_chunk_size):
@@ -1107,7 +1504,12 @@ def eval_single_vec_env(
         task_name=task_name,
         cfg=cfg
     )
+    async_mgr.vec_env = vec_env
     async_mgr.camera_projection = _extract_camera_projection(vec_env)
+    if hasattr(vec_env, "set_frame_annotator"):
+        vec_env.set_frame_annotator(
+            async_mgr._annotate_debug_frame_from_obs if (cfg.video_overlay_debug or cfg.save_video) else None
+        )
 
     total_episodes = cfg.max_episodes
     n_batches = (total_episodes + cfg.eval_batch_size - 1) // cfg.eval_batch_size
@@ -1120,7 +1522,11 @@ def eval_single_vec_env(
     launch_interval_batches = []
     env_step_times_ms = []
     control_sleep_times_ms = []
-    max_steps = vec_env.call("_max_episode_steps")[0] #这里有max_steps
+    max_steps = (
+        int(cfg.episode_length)
+        if getattr(cfg, "episode_length", None) is not None
+        else vec_env.call("_max_episode_steps")[0]
+    )  # Prefer explicit eval config when provided.
     monitor = GPUMonitor(gpu_id=0, interval=0.05)
     if cfg.use_monitor:
         monitor.start()
@@ -1281,15 +1687,32 @@ def run_benchmark_common(cfg: VLASHEvalConfig):
     from vlash.train import make_vlash_dataset
     dataset = make_vlash_dataset(cfg.train_cfg)
     
+    if "check" in cfg.policy.path:
+        cfg.policy.normalization_mapping = field(
+            default_factory=lambda: {
+                "VISUAL": NormalizationMode.IDENTITY,  # Images: no normalization
+                "STATE": NormalizationMode.QUANTILES,   # States: quantile normalization (matching official)
+                "ACTION": NormalizationMode.QUANTILES,  # Actions: quantile normalization (matching official)
+            }
+        )
+    
     # 1. 加载策略
     policy_cls = get_policy_class(cfg.policy.type)
     # print(dataset.meta.stats)
+    # 这里config有的话就直接用，没的话从path加载，所以 感觉其实可以不写，哦但是tmd compile model就一定会搞，算了还是用我的policy config写吧
     policy = policy_cls.from_pretrained(cfg.policy.pretrained_path, config=cfg.policy, dataset_stats=dataset.meta.stats) 
+    # policy = policy_cls.from_pretrained(cfg.policy.pretrained_path, dataset_stats=dataset.meta.stats) 
     policy.eval()
+    logging.info(f"Policy normalization mapping: {cfg.policy.normalization_mapping}")
     # 2. 初始化所有任务的环境
     if cfg.env_type == "libero":
         # 不指定 task_ids，让 factory 自动创建该 suite 下的所有任务
-        env_cfg = LiberoEnv(task=cfg.env_task, task_ids=cfg.task_ids) 
+        env_cfg = LiberoEnv(
+            task=cfg.env_task,
+            task_ids=cfg.task_ids,
+            obs_type="pixels_depth_agent_pos",
+            episode_length=cfg.episode_length,
+        )
     else:
         raise ValueError(f"Env type {cfg.env_type} not supported")
 
@@ -1418,11 +1841,6 @@ def run_benchmark_common(cfg: VLASHEvalConfig):
 def run_benchmark(cfg: VLASHEvalConfig):
     run_benchmark_common(cfg)
     
-    # entropy_dict = policy.get_attention_entropies()
-    # # 保存
-    # with open(out_dir / (task_name+"entropy_dict.json"), "w") as f:
-    #     json.dump(entropy_dict, f, indent=2)
-
 if __name__ == "__main__":
     try:
         run_benchmark()

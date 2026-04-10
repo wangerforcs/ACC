@@ -30,16 +30,21 @@ def main():
     parser.add_argument("--camera-height", type=int, default=256)
     parser.add_argument("--camera-width", type=int, default=256)
     parser.add_argument("--steps", type=int, default=120)
-    parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--control-freq", type=int, default=30)
     parser.add_argument("--robot", type=str, default="Panda")
     parser.add_argument("--moving-object-name", type=str, default="orange_juice_1")
+    parser.add_argument("--motion-trajectory", type=str, default=None)
     parser.add_argument("--motion-axis", type=str, default="y")
     parser.add_argument("--motion-path", type=str, default="line")
+    parser.add_argument("--motion-drive-type", type=str, default=None)
     parser.add_argument("--motion-secondary-axis", type=str, default=None)
     parser.add_argument("--motion-turn-direction", type=str, default="left")
     parser.add_argument("--motion-turn-step", type=int, default=None)
     parser.add_argument("--motion-turn-cycles", type=int, default=1)
     parser.add_argument("--motion-initial-speed", type=float, default=None)
+    parser.add_argument("--motion-drive-mode", type=str, default="velocity")
+    parser.add_argument("--motion-speed-profile", type=str, default=None)
     parser.add_argument("--motion-surface-friction-scale", type=float, default=None)
     parser.add_argument("--motion-settle-steps", type=int, default=15)
     parser.add_argument("--motion-drive-steps", type=int, default=12)
@@ -49,7 +54,7 @@ def main():
     parser.add_argument("--motion-friction-scale", type=float, default=0.15)
     parser.add_argument("--motion-friction-restore-step", type=int, default=None)
     parser.add_argument("--motion-object-resistance-scale", type=float, default=None)
-    parser.add_argument("--motion-post-restore-velocity-decay", type=float, default=0.97)
+    parser.add_argument("--motion-velocity-decay", type=float, default=None)
     parser.add_argument("--motion-return-enabled", type=lambda x: str(x).lower() == "true", default=False)
     parser.add_argument("--motion-max-angular-speed", type=float, default=0.0)
     parser.add_argument("--motion-amplitude", type=float, default=0.15)
@@ -67,14 +72,19 @@ def main():
         camera_names=[args.camera_name],
         camera_heights=args.camera_height,
         camera_widths=args.camera_width,
+        control_freq=args.control_freq,
         moving_object_name=args.moving_object_name,
+        motion_trajectory=args.motion_trajectory,
         motion_axis=args.motion_axis,
         motion_path=args.motion_path,
+        motion_drive_type=args.motion_drive_type,
         motion_secondary_axis=args.motion_secondary_axis,
         motion_turn_direction=args.motion_turn_direction,
         motion_turn_step=args.motion_turn_step,
         motion_turn_cycles=args.motion_turn_cycles,
         motion_initial_speed=args.motion_initial_speed,
+        motion_drive_mode=args.motion_drive_mode,
+        motion_speed_profile=args.motion_speed_profile,
         motion_surface_friction_scale=args.motion_surface_friction_scale,
         motion_settle_steps=args.motion_settle_steps,
         motion_drive_steps=args.motion_drive_steps,
@@ -84,7 +94,7 @@ def main():
         motion_friction_scale=args.motion_friction_scale,
         motion_friction_restore_step=args.motion_friction_restore_step,
         motion_object_resistance_scale=args.motion_object_resistance_scale,
-        motion_post_restore_velocity_decay=args.motion_post_restore_velocity_decay,
+        motion_velocity_decay=args.motion_velocity_decay,
         motion_return_enabled=args.motion_return_enabled,
         motion_max_angular_speed=args.motion_max_angular_speed,
         motion_amplitude=args.motion_amplitude,

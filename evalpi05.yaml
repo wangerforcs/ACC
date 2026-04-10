@@ -4,13 +4,22 @@ env_task: libero_object
 max_episodes: 50
 eval_batch_size: 1
 use_monitor: false
+episode_length: -1
+# eval_log_level: WARNING
+# tracker_log_level: ERROR
+# scoregate_log_level: ERRO
+# eval_log_level: WARNING
 
 # 策略配置 (对应 load_policy_manual 中的字段)
 policy:
   # type: pi05           # 对应 get_policy_class 为什么这个注释了也是pi05 哦因为policy被解析出来了, 加载模型的并用这里的覆盖
-  path: /pub/data/wangzb/pi05_libero_finetuned
+  # path: /pub/data/wangzb/30000check
+  # path: /pub/data/wangzb/50000check
+  path: /pub/data/wangzb/60000check
+  # path: /pub/data/wangzb/pi05_libero_finetuned
   # n_action_steps: 20   # 每次推理生成的动作步数
   n_action_steps: 30   # 每次推理生成的动作步数
+  chunk_size: 30
   dtype: bfloat16
   device: cuda
   compile_model: true
@@ -40,7 +49,7 @@ train_cfg:
     video_backend: torchcodec
     use_imagenet_stats: true
   wandb:
-    enable: true
+    enable: false
     disable_artifact: true
     project: vlash
   num_workers: 16

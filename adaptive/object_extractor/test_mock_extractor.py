@@ -4,7 +4,7 @@
 验证其是否能够为libero.txt中的每个指令生成正确的结果
 """
 
-from mock_extractor import extract_objects, extract_objects_with_details
+from mock_extractor import extract_object_roles, extract_objects, extract_objects_with_details
 
 # 读取libero.txt文件
 def read_libero_file():
@@ -28,12 +28,14 @@ def test_mock_extractor():
         
         # 测试extract_objects_with_details函数
         detailed_result = extract_objects_with_details(instruction)
+        role_result = extract_object_roles(instruction)
         
         # 验证结果
         is_correct = len(result) > 0
         detailed_is_correct = detailed_result['instruction'] == instruction and detailed_result['extracted_objects'] == result
+        role_is_correct = role_result["instruction"] == instruction and role_result["all_objects"] == result
         
-        if is_correct and detailed_is_correct:
+        if is_correct and detailed_is_correct and role_is_correct:
             passed += 1
             status = "✅ PASS"
         else:
@@ -43,6 +45,7 @@ def test_mock_extractor():
         print(f"Instruction: {instruction}")
         print(f"Extracted:   {result}")
         print(f"Detailed:    {detailed_result}")
+        print(f"Roles:       {role_result}")
         print()
     
     print("=" * 80)

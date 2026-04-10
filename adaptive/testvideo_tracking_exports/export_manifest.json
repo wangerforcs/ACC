@@ -1,0 +1,153 @@
+{
+  "video": "/pub/data/wangzb/vlash/adaptive/testvideo.mp4",
+  "instruction": "pick up the cream cheese and place it on the plate",
+  "parsed_objects": [
+    "cream cheese",
+    "plate"
+  ],
+  "models_dir": "/pub/data/wangzb/vlash/models",
+  "output_dir": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports",
+  "items": [
+    {
+      "backend": "cv2:CSRT",
+      "namespace": "cv2",
+      "create_name": "TrackerCSRT_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_csrt.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 9.524345669363226,
+      "success_rate": 0.8557142857142858,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:DaSiamRPN",
+      "namespace": "cv2",
+      "create_name": "TrackerDaSiamRPN_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_dasiamrpn.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 13.08926910161972,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:GOTURN",
+      "namespace": "cv2",
+      "create_name": "TrackerGOTURN_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_goturn.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 8.642149149839367,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:KCF",
+      "namespace": "cv2",
+      "create_name": "TrackerKCF_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_kcf.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 0.2710423299244472,
+      "success_rate": 0.14285714285714285,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:MIL",
+      "namespace": "cv2",
+      "create_name": "TrackerMIL_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_mil.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 43.610483317502904,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:Nano",
+      "namespace": "cv2",
+      "create_name": "TrackerNano_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_nano.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 3.910553955606052,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2:Vit",
+      "namespace": "cv2",
+      "create_name": "TrackerVit_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2_vit.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 4.581934306770563,
+      "success_rate": 0.9571428571428572,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:Boosting",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerBoosting_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_boosting.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 4.198468029499054,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:CSRT",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerCSRT_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_csrt.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 9.752657027649027,
+      "success_rate": 0.8557142857142858,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:KCF",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerKCF_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_kcf.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 0.26957157999277115,
+      "success_rate": 0.14285714285714285,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:MIL",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerMIL_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_mil.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 43.87725091140185,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:MOSSE",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerMOSSE_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_mosse.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 0.013869891741446086,
+      "success_rate": 0.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:MedianFlow",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerMedianFlow_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_medianflow.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 0.6631962050284658,
+      "success_rate": 1.0,
+      "num_updates": 700
+    },
+    {
+      "backend": "cv2.legacy:TLD",
+      "namespace": "cv2.legacy",
+      "create_name": "TrackerTLD_create",
+      "output_video": "/pub/data/wangzb/vlash/adaptive/testvideo_tracking_exports/testvideo_cv2.legacy_tld.mp4",
+      "frames_processed": 351,
+      "avg_update_ms": 8.133704194000789,
+      "success_rate": 1.0,
+      "num_updates": 700
+    }
+  ],
+  "failures": []
+}
